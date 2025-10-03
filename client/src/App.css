@@ -203,53 +203,6 @@ body {
   transform: translateY(-1px);
 }
 
-.btn-install {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  color: white;
-  border: none;
-  padding: 0.75rem 1.5rem;
-  border-radius: 12px;
-  font-size: 0.9375rem;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.3s;
-  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
-}
-
-.btn-install svg {
-  width: 20px;
-  height: 20px;
-}
-
-.btn-install:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
-}
-
-.btn-install:active {
-  transform: translateY(0);
-}
-
-.installed-badge {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  background: #dcfce7;
-  color: #16a34a;
-  padding: 0.75rem 1.5rem;
-  border-radius: 12px;
-  font-size: 0.9375rem;
-  font-weight: 600;
-}
-
-.installed-badge svg {
-  width: 20px;
-  height: 20px;
-}
-
 .status-indicator {
   display: flex;
   align-items: center;
@@ -299,37 +252,6 @@ body {
   50% { opacity: 0.5; }
 }
 
-/* Call Popup Overlay */
-.call-popup-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0, 0, 0, 0.7);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1000;
-  animation: fadeIn 0.3s ease-in-out;
-}
-
-@keyframes fadeIn {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-
-.call-popup {
-  background: white;
-  border-radius: 20px;
-  padding: 2rem;
-  max-width: 500px;
-  width: 90%;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
-  animation: slideUp 0.3s ease-out;
-  position: relative;
-}
-
 @keyframes slideUp {
   from {
     transform: translateY(50px);
@@ -341,121 +263,27 @@ body {
   }
 }
 
-.close-btn {
-  position: absolute;
-  top: 1rem;
-  right: 1rem;
-  background: #f3f4f6;
-  border: none;
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  font-size: 1.5rem;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #6b7280;
-  transition: all 0.2s;
-}
-
-.close-btn:hover {
-  background: #e5e7eb;
-  color: #374151;
-}
-
-.call-icon {
-  width: 80px;
-  height: 80px;
-  margin: 0 auto 1.5rem;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  animation: ring 1s infinite;
-}
-
-.call-icon svg {
-  width: 40px;
-  height: 40px;
-  color: white;
-}
-
-@keyframes ring {
-  0%, 100% { transform: rotate(0deg); }
-  10%, 30% { transform: rotate(-15deg); }
-  20%, 40% { transform: rotate(15deg); }
-}
-
-.call-popup h2 {
-  text-align: center;
-  font-size: 1.75rem;
-  color: #1f2937;
-  margin-bottom: 1.5rem;
-}
-
-.call-details {
+/* Customer Popup Overlay - Full Screen Dashboard */
+.customer-popup-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
   background: #f9fafb;
-  border-radius: 12px;
-  padding: 1.5rem;
-  margin-bottom: 1.5rem;
+  z-index: 2000;
+  animation: fadeIn 0.3s ease-in-out;
+  overflow-y: auto;
 }
 
-.detail-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 0.75rem 0;
-  border-bottom: 1px solid #e5e7eb;
+.customer-popup-dashboard {
+  min-height: 100vh;
+  background: #f9fafb;
 }
 
-.detail-row:last-child {
-  border-bottom: none;
-}
-
-.detail-row .label {
-  font-weight: 500;
-  color: #6b7280;
-  font-size: 0.875rem;
-}
-
-.detail-row .value {
-  font-weight: 600;
-  color: #1f2937;
-  font-size: 1rem;
-}
-
-.status-badge {
-  background: #dbeafe;
-  color: #1e40af;
-  padding: 0.25rem 0.75rem;
-  border-radius: 12px;
-  font-size: 0.875rem;
-}
-
-.call-actions {
-  display: flex;
-  gap: 1rem;
-}
-
-.btn-dismiss {
-  flex: 1;
-  padding: 1rem;
-  border: none;
-  border-radius: 12px;
-  font-size: 1rem;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.2s;
-  background: #667eea;
-  color: white;
-}
-
-.btn-dismiss:hover {
-  background: #5568d3;
-  transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 /* Main Content */
@@ -557,79 +385,12 @@ body {
   font-weight: 500;
 }
 
-/* Install Modal */
-.modal-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0, 0, 0, 0.7);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1000;
-  animation: fadeIn 0.3s ease-in-out;
-}
-
-.modal-content {
-  background: white;
-  border-radius: 20px;
-  padding: 2rem;
-  max-width: 600px;
-  width: 90%;
-  max-height: 80vh;
-  overflow-y: auto;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
-  animation: slideUp 0.3s ease-out;
-  position: relative;
-}
-
-.modal-content h2 {
-  font-size: 1.75rem;
-  color: #1f2937;
-  margin-bottom: 1.5rem;
-  text-align: center;
-}
-
-.modal-content h3 {
-  font-size: 1.25rem;
-  color: #374151;
-  margin: 1rem 0 0.75rem;
-}
-
-.install-instructions {
-  text-align: left;
-}
-
-.install-instructions ol {
-  margin: 1rem 0 1rem 1.5rem;
-  line-height: 1.8;
-}
-
-.install-instructions li {
-  margin-bottom: 0.5rem;
-  color: #4b5563;
-}
-
-.install-instructions strong {
-  color: #1f2937;
-  font-weight: 600;
-}
-
-.install-instructions .note {
-  background: #f3f4f6;
-  padding: 0.75rem;
-  border-radius: 8px;
-  margin-top: 1rem;
-  font-size: 0.875rem;
-  color: #6b7280;
-  font-style: italic;
-}
-
-.modal-content .btn-dismiss {
+/* Customer Dashboard Container */
+.customer-dashboard-container {
   width: 100%;
-  margin-top: 1.5rem;
+  min-height: 100vh;
+  background: #f9fafb;
+  overflow-y: auto;
 }
 
 /* Responsive */
@@ -650,7 +411,6 @@ body {
     justify-content: center;
   }
 
-  .btn-install,
   .btn-logout {
     flex: 1;
   }
@@ -658,11 +418,6 @@ body {
   .status-indicator {
     flex: 1;
     justify-content: center;
-  }
-
-  .call-popup {
-    width: 95%;
-    padding: 1.5rem;
   }
 
   .main-content {

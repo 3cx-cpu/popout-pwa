@@ -17,18 +17,410 @@ const TOKEN_URL = `${PBX_BASE_URL}/connect/token`;
 const WS_URL = 'wss://pbx.bozarthconnect.com/callcontrol/ws';
 const LOGIN_URL = 'https://pbx.bozarthconnect.com/webclient/api/Login/GetAccessToken';
 
+// VinSolutions Configuration
+const VIN_CONFIG = {
+  tokenUrl: "https://authentication.vinsolutions.com/connect/token",
+  apiBaseUrl: "https://api.vinsolutions.com",
+  clientId: "GATEW0099657",
+  clientSecret: "B8B5C389100149958F0DC0B4C1BB4FEE",
+  apiKey: "ZrqgRCrh355BhV46t2eWq1FkrLPxcWa64novnnnf",
+  dealerId: "22269",
+  userId: "1286659"
+};
+
 let accessToken = null;
 let tokenExpiryTime = null;
 let pbxWebSocket = null;
 let latestSequence = 0;
-let connectedClients = new Map(); // Changed to Map to store client info
+let connectedClients = new Map();
 
-// Create axios instance with SSL verification disabled (for self-signed certs)
+// VinSolutions token
+let vinToken = null;
+let vinTokenExpiry = null;
+
+// Create axios instance
 const axiosInstance = axios.create({
   httpsAgent: new https.Agent({
     rejectUnauthorized: false
   })
 });
+
+// ============= VINSOLUTIONS API FUNCTIONS =============
+
+// Extract phone digits
+function extractPhoneDigits(phone) {
+  const digits = String(phone).replace(/[^\d]/g, "");
+  if (digits.length === 11 && digits[0] === '1') {
+    return digits.substring(1);
+  }
+  return digits;
+}
+
+// Get VinSolutions Token
+async function getVinToken(forceRefresh = false) {
+  try {
+    if (!forceRefresh && vinToken && vinTokenExpiry && new Date() < vinTokenExpiry) {
+      return vinToken;
+    }
+
+    console.log("🔐 Fetching VinSolutions token...");
+    const params = new URLSearchParams({
+      grant_type: "client_credentials",
+      client_id: VIN_CONFIG.clientId,
+      client_secret: VIN_CONFIG.clientSecret,
+      scope: "PublicAPI"
+    });
+
+    const response = await axios.post(VIN_CONFIG.tokenUrl, params, {
+      headers: { "Content-Type": "application/x-www-form-urlencoded" }
+    });
+
+    vinToken = response.data.access_token;
+    vinTokenExpiry = new Date(Date.now() + (response.data.expires_in - 60) * 1000);
+    console.log(`✅ VinSolutions token obtained`);
+    return vinToken;
+  } catch (error) {
+    console.error('❌ Error getting VinSolutions token:', error.message);
+    throw error;
+  }
+}
+
+// Make VinSolutions Request
+async function makeVinRequest(url, params = {}, headers = {}, retryOnAuth = true) {
+  try {
+    let token = await getVinToken();
+    
+    const defaultHeaders = {
+      "Authorization": `Bearer ${token}`,
+      "api_key": VIN_CONFIG.apiKey,
+      "Accept": headers.Accept || "application/json"
+    };
+
+    const fullParams = { 
+      dealerId: params.dealerId || VIN_CONFIG.dealerId,
+      ...params 
+    };
+    
+    if (url.includes('/gateway/v1/') || url.includes('/leads')) {
+      fullParams.userId = params.userId || VIN_CONFIG.userId;
+    }
+
+    const response = await axios.get(url, {
+      params: fullParams,
+      headers: { ...defaultHeaders, ...headers },
+      timeout: 10000
+    });
+
+    return response.data;
+  } catch (error) {
+    if (error.response && error.response.status === 401 && retryOnAuth) {
+      console.log("🔄 VinSolutions token expired, refreshing...");
+      await getVinToken(true);
+      return makeVinRequest(url, params, headers, false);
+    }
+    
+    if (error.response && error.response.status === 404) {
+      return null;
+    }
+    throw error;
+  }
+}
+
+// Get all contacts by phone
+async function getContactsByPhone(phoneNumber) {
+  console.log(`📞 Fetching contacts for: ${phoneNumber}`);
+  const url = `${VIN_CONFIG.apiBaseUrl}/gateway/v1/contact`;
+  
+  try {
+    const response = await makeVinRequest(url, { phone: phoneNumber });
+    
+    if (response && response.length > 0) {
+      console.log(`✅ Found ${response.length} contact(s)`);
+      return response.map((contact) => {
+        const contactInfo = contact.ContactInformation;
+        return {
+          contactId: contact.ContactId,
+          firstName: contactInfo.FirstName || "",
+          lastName: contactInfo.LastName || "",
+          fullName: `${contactInfo.FirstName || ""} ${contactInfo.LastName || ""}`.trim(),
+          phones: contactInfo.Phones || [],
+          emails: contactInfo.Emails || [],
+          addresses: contactInfo.Addresses || [],
+          phone: phoneNumber,
+          email: contactInfo.Emails?.[0]?.EmailAddress || ""
+        };
+      });
+    }
+    return [];
+  } catch (error) {
+    console.error("❌ Error fetching contacts:", error.message);
+    return [];
+  }
+}
+
+// Get leads for contact
+async function getLeads(contactId) {
+  const url = `${VIN_CONFIG.apiBaseUrl}/leads`;
+  const params = { limit: 100, sortBy: 'Date', contactId };
+  const headers = {
+    "Accept": "application/vnd.coxauto.v3+json",
+    "Content-Type": "application/vnd.coxauto.v3+json"
+  };
+  
+  try {
+    const response = await makeVinRequest(url, params, headers);
+    if (response && response.items) {
+      return response.items.map(lead => ({
+        leadId: lead.leadId,
+        leadStatus: lead.leadStatusType,
+        leadType: lead.leadType,
+        leadGroupCategory: lead.leadGroupCategory,
+        createdUtc: lead.createdUtc,
+        isHot: lead.isHot,
+        contact: lead.contact,
+        leadSource: lead.leadSource,
+        vehiclesOfInterest: lead.vehiclesOfInterest || [],
+        tradeVehicles: lead.tradeVehicles || []
+      }));
+    }
+    return [];
+  } catch (error) {
+    console.error("❌ Error fetching leads:", error.message);
+    return [];
+  }
+}
+
+// Get vehicles of interest
+async function getVehiclesOfInterest(leadId) {
+  const url = `${VIN_CONFIG.apiBaseUrl}/vehicles/interest`;
+  const headers = {
+    "Accept": "application/vnd.coxauto.v1+json",
+    "Content-Type": "application/vnd.coxauto.v1+json"
+  };
+  
+  try {
+    const response = await makeVinRequest(url, { leadId }, headers);
+    if (response && response.items) {
+      return response.items.map(vehicle => ({
+        year: vehicle.year,
+        make: vehicle.make,
+        model: vehicle.model,
+        trim: vehicle.trim || "",
+        vin: vehicle.vin,
+        sellingPrice: vehicle.sellingPrice,
+        exteriorColor: vehicle.exteriorColor || "",
+        trimName: vehicle.autoEntity?.trimName || "",
+        externalColorName: vehicle.autoEntity?.externalColorName || ""
+      }));
+    }
+    return [];
+  } catch (error) {
+    console.error("❌ Error fetching vehicles:", error.message);
+    return [];
+  }
+}
+
+// Get trade vehicles
+async function getTradeVehicles(leadId) {
+  const url = `${VIN_CONFIG.apiBaseUrl}/vehicles/trade`;
+  const headers = {
+    "Accept": "application/vnd.coxauto.v1+json",
+    "Content-Type": "application/vnd.coxauto.v1+json"
+  };
+  
+  try {
+    const response = await makeVinRequest(url, { leadId }, headers);
+    if (response && response.items) {
+      return response.items.map(vehicle => ({
+        year: vehicle.year,
+        make: vehicle.make,
+        model: vehicle.model,
+        trim: vehicle.trim || "",
+        vin: vehicle.vin,
+        mileage: vehicle.mileage
+      }));
+    }
+    return [];
+  } catch (error) {
+    return [];
+  }
+}
+
+// Get lead source
+async function getLeadSource(leadSourceId) {
+  const url = `${VIN_CONFIG.apiBaseUrl}/leadSources/id/${leadSourceId}`;
+  const headers = { "Accept": "application/vnd.coxauto.v1+json" };
+  
+  try {
+    const response = await makeVinRequest(url, {}, headers);
+    if (response) {
+      return {
+        leadSourceId: response.leadSourceId,
+        leadSourceName: response.leadSourceName
+      };
+    }
+    return null;
+  } catch (error) {
+    return null;
+  }
+}
+
+// Get user by ID
+async function getUserById(userId) {
+  if (!userId || userId === 0) return null;
+  
+  const url = `${VIN_CONFIG.apiBaseUrl}/gateway/v1/tenant/user/id/${userId}`;
+  const params = { dealerId: VIN_CONFIG.dealerId, limit: 100, UserId: userId };
+  
+  try {
+    const response = await makeVinRequest(url, params);
+    if (response) {
+      return {
+        userId: response.UserId,
+        fullName: response.FullName,
+        firstName: response.FirstName,
+        lastName: response.LastName,
+        emailAddress: response.EmailAddress,
+        userTypes: response.UserTypes || []
+      };
+    }
+    return null;
+  } catch (error) {
+    return null;
+  }
+}
+
+// Get contact details with dealer team
+async function getContactDetails(contactUrl) {
+  try {
+    const urlMatch = contactUrl.match(/contacts\/id\/(\d+)\?dealerid=(\d+)/);
+    if (!urlMatch) return null;
+    
+    const contactId = urlMatch[1];
+    const dealerId = urlMatch[2];
+    const url = `${VIN_CONFIG.apiBaseUrl}/contacts/id/${contactId}`;
+    const params = { dealerId, userId: VIN_CONFIG.userId };
+    
+    const response = await makeVinRequest(url, params);
+    if (response && response.length > 0) {
+      const contactData = response[0];
+      const salesRep = contactData.DealerTeam?.find(member => member.RoleName === "Sales Rep");
+      
+      return {
+        contactInfo: contactData.ContactInformation,
+        dealerTeam: contactData.DealerTeam,
+        salesRepUserId: salesRep?.UserId || null,
+        salesRepName: salesRep?.FullName || null
+      };
+    }
+    return null;
+  } catch (error) {
+    return null;
+  }
+}
+
+// Process leads in parallel
+async function processLeadsInParallel(leads) {
+  const leadPromises = leads.map(async (lead) => {
+    const [vehiclesOfInterest, tradeVehicles, leadSource, contactDetails] = await Promise.allSettled([
+      getVehiclesOfInterest(lead.leadId),
+      getTradeVehicles(lead.leadId),
+      lead.leadSource ? (async () => {
+        const match = lead.leadSource.match(/\/(\d+)\?/);
+        return match ? getLeadSource(match[1]) : null;
+      })() : Promise.resolve(null),
+      lead.contact ? getContactDetails(lead.contact) : Promise.resolve(null)
+    ]);
+    
+    const salesRepData = contactDetails.status === 'fulfilled' && contactDetails.value?.salesRepUserId
+      ? await getUserById(contactDetails.value.salesRepUserId)
+      : null;
+    
+    return {
+      ...lead,
+      vehiclesOfInterest: vehiclesOfInterest.status === 'fulfilled' ? vehiclesOfInterest.value : [],
+      tradeVehicles: tradeVehicles.status === 'fulfilled' ? tradeVehicles.value : [],
+      leadSource: leadSource.status === 'fulfilled' ? leadSource.value : null,
+      salesRepInfo: salesRepData
+    };
+  });
+  
+  return Promise.all(leadPromises);
+}
+
+// Get complete customer data
+async function getCompleteCustomerData(phoneNumber) {
+  console.log("\n🚀 Fetching complete customer data for:", phoneNumber);
+  const startTime = Date.now();
+  
+  try {
+    const contacts = await getContactsByPhone(phoneNumber);
+    
+    if (!contacts || contacts.length === 0) {
+      console.log("⚠️ No contacts found");
+      return null;
+    }
+    
+    console.log(`✅ Found ${contacts.length} contact(s)`);
+    
+    // Process each contact
+    const allContactsDataPromises = contacts.map(async (contact) => {
+      const leads = await getLeads(contact.contactId);
+      let allLeadsData = [];
+      let primarySalesRepInfo = null;
+      
+      if (leads.length > 0) {
+        allLeadsData = await processLeadsInParallel(leads);
+        
+        // Find primary sales rep
+        for (const leadData of allLeadsData) {
+          if (leadData.salesRepInfo) {
+            primarySalesRepInfo = leadData.salesRepInfo;
+            break;
+          }
+        }
+      }
+      
+      const salesAssignment = await getUserById(VIN_CONFIG.userId);
+      
+      return {
+        contact,
+        leads,
+        allLeadsData,
+        vehiclesOfInterest: allLeadsData[0]?.vehiclesOfInterest || [],
+        tradeVehicles: allLeadsData[0]?.tradeVehicles || [],
+        salesAssignment,
+        salesRepInfo: primarySalesRepInfo,
+        leadSource: allLeadsData[0]?.leadSource || null
+      };
+    });
+    
+    const allContactsData = await Promise.all(allContactsDataPromises);
+    const totalTime = Date.now() - startTime;
+    
+    console.log(`✅ Data retrieval complete in ${totalTime}ms`);
+    
+    return {
+      contact: contacts[0],
+      leads: allContactsData[0]?.leads || [],
+      allLeadsData: allContactsData[0]?.allLeadsData || [],
+      vehiclesOfInterest: allContactsData[0]?.vehiclesOfInterest || [],
+      tradeVehicles: allContactsData[0]?.tradeVehicles || [],
+      salesAssignment: allContactsData[0]?.salesAssignment,
+      salesRepInfo: allContactsData[0]?.salesRepInfo,
+      leadSource: allContactsData[0]?.leadSource,
+      contacts,
+      allContactsData,
+      hasMultipleContacts: contacts.length > 1,
+      retrievalTime: totalTime
+    };
+  } catch (error) {
+    console.error("❌ Error in getCompleteCustomerData:", error.message);
+    return null;
+  }
+}
+
+// ============= 3CX FUNCTIONS =============
 
 // Login endpoint
 app.post('/api/login', async (req, res) => {
@@ -71,7 +463,7 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
-// Get access token from 3CX
+// Get 3CX access token
 async function getAccessToken() {
   try {
     const params = new URLSearchParams();
@@ -88,19 +480,16 @@ async function getAccessToken() {
     accessToken = response.data.access_token;
     tokenExpiryTime = Date.now() + (response.data.expires_in * 1000) - 5000;
     
-    console.log('Access token obtained successfully');
-    console.log('Token expires in:', response.data.expires_in, 'seconds');
+    console.log('✅ 3CX token obtained');
     return accessToken;
   } catch (error) {
-    console.error('Error getting access token:', error.response?.data || error.message);
+    console.error('❌ Error getting 3CX token:', error.message);
     throw error;
   }
 }
 
-// Check and refresh token if needed
 async function ensureValidToken() {
   if (!accessToken || Date.now() >= tokenExpiryTime) {
-    console.log('Token expired or not available, fetching new token...');
     await getAccessToken();
   }
   return accessToken;
@@ -112,18 +501,15 @@ async function getParticipantDetails(entity) {
     const token = await ensureValidToken();
     const url = `${PBX_BASE_URL}${entity}`;
     
-    console.log('Fetching participant details from:', url);
-    
     const response = await axiosInstance.get(url, {
       headers: {
         'Authorization': `Bearer ${token}`
       }
     });
 
-    console.log('Participant details received:', response.data);
     return response.data;
   } catch (error) {
-    console.error('Error getting participant details:', error.response?.data || error.message);
+    console.error('❌ Error getting participant details:', error.message);
     return null;
   }
 }
@@ -137,7 +523,7 @@ async function connectTo3CXWebSocket() {
       pbxWebSocket.close();
     }
 
-    console.log('Connecting to 3CX WebSocket...');
+    console.log('🔌 Connecting to 3CX WebSocket...');
     
     pbxWebSocket = new WebSocket(WS_URL, {
       headers: {
@@ -147,42 +533,36 @@ async function connectTo3CXWebSocket() {
     });
 
     pbxWebSocket.on('open', () => {
-      console.log('✓ Connected to 3CX WebSocket successfully');
+      console.log('✅ Connected to 3CX WebSocket');
     });
 
     pbxWebSocket.on('message', async (data) => {
       try {
         const message = JSON.parse(data.toString());
-        console.log('WebSocket message received - Sequence:', message.sequence);
 
         if (message.sequence && message.event && message.event.entity) {
-          // Update latest sequence
           if (message.sequence > latestSequence) {
             latestSequence = message.sequence;
 
             const entity = message.event.entity;
-            console.log('Entity:', entity);
-            
-            // Extract extension from entity
-            // Format: /callcontrol/3000/participants/3557
             const entityParts = entity.split('/');
             
             if (entityParts.length >= 3 && entityParts[1] === 'callcontrol') {
               const userExtension = entityParts[2];
-              console.log(`\n🔔 CALL DETECTED for extension ${userExtension}!`);
+              console.log(`\n🔔 CALL DETECTED for extension ${userExtension}`);
               
-              // Get participant details
               const participantDetails = await getParticipantDetails(entity);
               
               if (participantDetails) {
-                console.log('Call Details:');
-                console.log('  - Caller Name:', participantDetails.party_caller_name);
-                console.log('  - Caller Number:', participantDetails.party_caller_id);
-                console.log('  - Status:', participantDetails.status);
-                console.log('  - Type:', participantDetails.party_dn_type);
-                console.log('  - Extension:', userExtension);
+                const callerNumber = participantDetails.party_caller_id;
+                console.log(`📞 Caller Number: ${callerNumber}`);
                 
-                // Broadcast to specific user's connected clients
+                // Fetch VinSolutions data
+                const vinPhoneNumber = extractPhoneDigits(callerNumber);
+                console.log(`🔍 Searching VinSolutions for: ${vinPhoneNumber}`);
+                
+                const customerData = await getCompleteCustomerData(vinPhoneNumber);
+                
                 const notification = {
                   type: 'call_notification',
                   data: {
@@ -193,7 +573,9 @@ async function connectTo3CXWebSocket() {
                     partyDnType: participantDetails.party_dn_type,
                     callId: participantDetails.callid,
                     timestamp: new Date().toISOString(),
-                    userExtension: userExtension
+                    userExtension: userExtension,
+                    // VinSolutions data
+                    customerData: customerData
                   }
                 };
 
@@ -203,26 +585,25 @@ async function connectTo3CXWebSocket() {
           }
         }
       } catch (error) {
-        console.error('Error processing WebSocket message:', error.message);
+        console.error('❌ Error processing WebSocket message:', error.message);
       }
     });
 
     pbxWebSocket.on('error', (error) => {
-      console.error('3CX WebSocket error:', error.message);
+      console.error('❌ 3CX WebSocket error:', error.message);
     });
 
     pbxWebSocket.on('close', () => {
-      console.log('3CX WebSocket closed. Reconnecting in 5 seconds...');
+      console.log('❌ 3CX WebSocket closed. Reconnecting...');
       setTimeout(connectTo3CXWebSocket, 5000);
     });
 
   } catch (error) {
-    console.error('Error connecting to 3CX WebSocket:', error.message);
+    console.error('❌ Error connecting to 3CX:', error.message);
     setTimeout(connectTo3CXWebSocket, 5000);
   }
 }
 
-// Broadcast message to specific user's clients
 function broadcastToUser(username, message) {
   let sentCount = 0;
   connectedClients.forEach((clientInfo, client) => {
@@ -231,25 +612,22 @@ function broadcastToUser(username, message) {
       sentCount++;
     }
   });
-  console.log(`✓ Notification sent to ${sentCount} client(s) for user ${username}\n`);
+  console.log(`✅ Notification sent to ${sentCount} client(s) for user ${username}`);
 }
 
-// Handle client WebSocket connections
+// WebSocket handler
 wss.on('connection', (ws) => {
-  console.log('Client connected - Total clients:', connectedClients.size + 1);
-  
-  // Store client with pending authentication
+  console.log('🔌 Client connected');
   connectedClients.set(ws, { authenticated: false, username: null });
 
   ws.on('message', (data) => {
     try {
       const message = JSON.parse(data.toString());
       
-      // Handle authentication
       if (message.type === 'authenticate') {
         const username = message.username;
         connectedClients.set(ws, { authenticated: true, username: username });
-        console.log(`User ${username} authenticated via WebSocket`);
+        console.log(`✅ User ${username} authenticated`);
         
         ws.send(JSON.stringify({ 
           type: 'authenticated', 
@@ -258,29 +636,28 @@ wss.on('connection', (ws) => {
         }));
       }
     } catch (error) {
-      console.error('Error processing client message:', error.message);
+      console.error('❌ Error processing client message:', error.message);
     }
   });
 
   ws.on('close', () => {
     const clientInfo = connectedClients.get(ws);
-    console.log(`Client disconnected (${clientInfo?.username || 'unauthenticated'}) - Remaining clients:`, connectedClients.size - 1);
+    console.log(`❌ Client disconnected (${clientInfo?.username || 'unauthenticated'})`);
     connectedClients.delete(ws);
   });
 
   ws.on('error', (error) => {
-    console.error('Client WebSocket error:', error.message);
+    console.error('❌ Client WebSocket error:', error.message);
     connectedClients.delete(ws);
   });
 
-  // Send connection confirmation
   ws.send(JSON.stringify({ 
     type: 'connected', 
     message: 'Connected to call notification service'
   }));
 });
 
-// Health check endpoint
+// Health check
 app.get('/health', (req, res) => {
   res.json({ 
     status: 'ok', 
@@ -295,19 +672,20 @@ app.get('/health', (req, res) => {
 const PORT = process.env.PORT || 7080;
 
 server.listen(PORT, '0.0.0.0', async () => {
-  console.log(`\n========================================`);
-  console.log(`3CX Call Notification Server`);
-  console.log(`========================================`);
+  console.log(`\n${'='.repeat(60)}`);
+  console.log(`🚀 3CX + VinSolutions Integration Server`);
+  console.log(`${'='.repeat(60)}`);
   console.log(`Server running on port ${PORT}`);
-  console.log(`========================================\n`);
+  console.log(`${'='.repeat(60)}\n`);
   
-  // Initialize connection to 3CX
   try {
     await getAccessToken();
+    await getVinToken(); // Initialize VinSolutions token
     await connectTo3CXWebSocket();
-    console.log('✓ 3CX integration initialized successfully\n');
+    console.log('✅ All services initialized\n');
   } catch (error) {
-    console.error('✗ Failed to initialize 3CX integration:', error.message);
-    console.log('Will retry connection...\n');
+    console.error('❌ Failed to initialize:', error.message);
   }
 });
+
+module.exports = { app, server };
