@@ -39,7 +39,7 @@ const ProductSpecialistMainCard = ({ loading, customerData, from, vehicleData, a
     }
 
     if (status === 'bad' || status === 'dead' || status === 'lost' || status === 'inactive' || status === 'closed') {
-      return 'Bad Lead';
+      return 'Leads';
     }
 
     return 'Lead';
@@ -119,7 +119,6 @@ const ProductSpecialistMainCard = ({ loading, customerData, from, vehicleData, a
           </div>
 
           {/* Sales Assignment Card */}
-{/* Sales Assignment Card */}
 <div className="bg-white rounded-lg border border-gray-200 p-5">
   <div className="flex items-center gap-2 mb-4">
     <Users className="w-6 h-6 text-yellow-500" />
@@ -201,6 +200,24 @@ const ProductSpecialistMainCard = ({ loading, customerData, from, vehicleData, a
           </div>
         </div>
 
+
+            {/* Time Created */}
+        <div className="flex justify-between items-start">
+  <div className="text-medium font-semibold text-black-600 min-w-[140px]">Created On:</div>
+  <div className="text-gray-900 text-right">
+    {allLeads[selectedLeadIndex]?.createdUtc 
+      ? new Date(allLeads[selectedLeadIndex].createdUtc).toLocaleString('en-US', {
+          day: '2-digit',
+          month: 'short',
+          year: 'numeric',
+          hour: 'numeric',
+          minute: '2-digit',
+          hour12: true,
+          timeZone: 'UTC'
+        }) + ' UTC'
+      : 'Unknown'}
+  </div>
+</div>
         {/* Desired Vehicle Summary */}
         {/* {vehicleData?.desiredVehicle && (
           <div className="flex justify-between items-start">
@@ -212,14 +229,14 @@ const ProductSpecialistMainCard = ({ loading, customerData, from, vehicleData, a
         )} */}
 
         {/* Current Vehicle Summary */}
-        {vehicleData?.tradeVehicle && (
+        {/* {vehicleData?.tradeVehicle && (
           <div className="flex justify-between items-start">
             <div className="text-medium font-semibold text-black-600 min-w-[140px]">Current Vehicle:</div>
             <div className="text-gray-900 text-right">
               {vehicleData.tradeVehicle.year} {vehicleData.tradeVehicle.make} {vehicleData.tradeVehicle.model}
             </div>
           </div>
-        )}
+        )} */}
       </div>
     </div>
   ) : (

@@ -146,6 +146,8 @@ async function getContactsByPhone(phoneNumber) {
           phones: contactInfo.Phones || [],
           emails: contactInfo.Emails || [],
           addresses: contactInfo.Addresses || [],
+          StreetAddress: `${contactInfo.Addresses?.[0]?.StreetAddress}` || "",
+          cityStatePost: `${contactInfo.Addresses?.[0]?.City || ""} ${contactInfo.Addresses?.[0]?.State || ""} ${contactInfo.Addresses?.[0]?.Postal || ""}`.trim() || "",
           phone: phoneNumber,
           email: contactInfo.Emails?.[0]?.EmailAddress || ""
         };
@@ -207,10 +209,20 @@ async function getVehiclesOfInterest(leadId) {
         model: vehicle.model,
         trim: vehicle.trim || "",
         vin: vehicle.vin,
+        mileage: vehicle.mileage,
         sellingPrice: vehicle.sellingPrice,
+        msrp: vehicle.msrp,
+        inventoryType: vehicle.inventoryType,
         exteriorColor: vehicle.exteriorColor || "",
+        interiorColor: vehicle.interiorColor || "",
+        stockNumber: vehicle.stockNumber || "",
+        description: vehicle.description || "",
+        // Additional fields from autoEntity
         trimName: vehicle.autoEntity?.trimName || "",
-        externalColorName: vehicle.autoEntity?.externalColorName || ""
+        autoEntityMileage: vehicle.autoEntity?.mileage || null,
+        interiorColorName: vehicle.autoEntity?.interiorColorName || "",
+        externalColorName: vehicle.autoEntity?.externalColorName || "",
+        price: vehicle.autoEntity?.price || null
       }));
     }
     return [];
