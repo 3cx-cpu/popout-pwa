@@ -1,32 +1,39 @@
-// client\src\components\cards\receptionist\ReceptionistMainCard.jsx
-
 import React from 'react';
 import { User, Car, RefreshCw, Activity, Users, Phone, Mail } from 'lucide-react';
 
-const ReceptionistMainCard = ({ loading, customerData, from, vehicleData, allLeads, selectedLeadIndex, handleLeadClick }) => {
+const ReceptionistMainCard = ({ loading, customerData, from, vehicleData, allLeads, selectedLeadIndex, handleLeadClick, loadingStage = 4 }) => {
+  
+  // Add debug logging
+  console.log('🎴 ReceptionistMainCard render:', {
+    loading,
+    loadingStage,
+    hasCustomerData: !!customerData,
+    contact: customerData?.contact,
+    leadsCount: allLeads?.length
+  });
+
   const contact = customerData?.contact || {};
   const salesAgent = customerData?.salesRepInfo || null;
+
+  // Show loading skeleton only for Stage 1 (no contact data yet)
+  const showLoadingSkeleton = loadingStage < 2 || !contact.fullName;
 
   // Function to determine lead status color
   const getLeadStatusColor = (leadStatus) => {
     const status = leadStatus?.toLowerCase();
 
-    // Active/Good statuses - Green
     if (status === 'active' || status === 'hot' || status === 'warm' || status === 'new') {
       return 'bg-green-50 border-l-4 border-green-500';
     }
 
-    // Bad/Inactive statuses - Red
     if (status === 'bad' || status === 'dead' || status === 'lost' || status === 'inactive' || status === 'closed') {
       return 'bg-red-50 border-l-4 border-red-500';
     }
 
-    // Neutral statuses - Yellow/Orange
     if (status === 'cold' || status === 'pending' || status === 'follow_up') {
       return 'bg-yellow-50 border-l-4 border-yellow-500';
     }
 
-    // Default - Blue
     return 'bg-blue-50 border-l-4 border-blue-500';
   };
 
@@ -57,7 +64,7 @@ const ReceptionistMainCard = ({ loading, customerData, from, vehicleData, allLea
             </div>
             <h2 className="text-lg font-bold text-[#5B79B8]">Customer Information</h2>
           </div>
-          {loading ? (
+          {showLoadingSkeleton ? (
             <div className="space-y-4">
               {['Name:', 'Phone:', 'Email:', 'Address:', 'Lead Source:'].map((label, i) => (
                 <div key={i} className="flex justify-between items-center">
@@ -71,30 +78,30 @@ const ReceptionistMainCard = ({ loading, customerData, from, vehicleData, allLea
               <div className="flex justify-between items-center">
                 <span className="text-sm text-black font-bold">Name:</span>
                 <span className="text-sm font-semibold text-gray-900">
-                  {contact?.fullName}
+                  {contact?.fullName || 'N/A'}
                 </span>
               </div>
               <div className="flex justify-between items-center">
                 <span className="text-sm text-black font-bold">Phone:</span>
                 <span className="text-sm font-semibold text-gray-900">
-                  {contact?.phone || customerData?.callInfo?.party_caller_id}
+                  {contact?.phone || from || 'N/A'}
                 </span>
               </div>
               <div className="flex justify-between items-center">
                 <span className="text-sm text-black font-bold">Email:</span>
                 <span className="text-sm font-semibold text-gray-900">
-                  {contact?.email}
+                  {contact?.email || 'N/A'}
                 </span>
               </div>
               <div className="flex justify-between items-center">
                 <span className="text-sm text-black font-bold">Address:</span>
                 <span className="text-sm font-semibold text-gray-900">
                   <div>
-                <div className="text-base font-medium text-gray-900">
-                  {contact?.StreetAddress || 'N/A'}
-                </div>
-                <div className="text-sm text-gray-500">{contact?.cityStatePost || 'N/A'}</div>
-              </div>
+                    <div className="text-base font-medium text-gray-900">
+                      {contact?.StreetAddress || 'N/A'}
+                    </div>
+                    <div className="text-sm text-gray-500">{contact?.cityStatePost || 'N/A'}</div>
+                  </div>
                 </span>
               </div>
               <div className="flex justify-between items-center">
@@ -123,7 +130,16 @@ const ReceptionistMainCard = ({ loading, customerData, from, vehicleData, allLea
             )}
           </div>
 
-          {vehicleData?.desiredVehicle ? (
+          {loadingStage < 4 ? (
+            <div className="space-y-4">
+              {['Year/Make/Model:', 'Trim Level:', 'Color Preference:', 'Retail Price:'].map((label, i) => (
+                <div key={i} className="flex justify-between items-center">
+                  <span className="text-sm text-black font-bold">{label}</span>
+                  <div className="h-4 bg-gray-200 rounded animate-pulse w-32"></div>
+                </div>
+              ))}
+            </div>
+          ) : vehicleData?.desiredVehicle ? (
             <div className="space-y-4">
               <div className="flex justify-between items-center">
                 <span className="text-sm text-black font-bold">Year/Make/Model:</span>
@@ -183,7 +199,16 @@ const ReceptionistMainCard = ({ loading, customerData, from, vehicleData, allLea
             )}
           </div>
 
-          {vehicleData?.tradeVehicle ? (
+          {loadingStage < 4 ? (
+            <div className="space-y-4">
+              {['Year/Make/Model:', 'Trim:', 'Mileage:'].map((label, i) => (
+                <div key={i} className="flex justify-between items-center">
+                  <span className="text-sm text-black font-bold">{label}</span>
+                  <div className="h-4 bg-gray-200 rounded animate-pulse w-32"></div>
+                </div>
+              ))}
+            </div>
+          ) : vehicleData?.tradeVehicle ? (
             <div className="space-y-4">
               <div className="flex justify-between items-center">
                 <span className="text-sm text-black font-bold">Year/Make/Model:</span>
@@ -226,9 +251,13 @@ const ReceptionistMainCard = ({ loading, customerData, from, vehicleData, allLea
               <h2 className="text-base font-bold text-blue-900">Lead Status & Activity</h2>
             </div>
 
-            {allLeads.length > 0 ? (
+            {loadingStage < 3 ? (
+              <div className="text-center text-gray-500 py-8">
+                <div className="w-8 h-8 border-3 border-gray-300 border-t-blue-500 rounded-full animate-spin mx-auto mb-3"></div>
+                Loading leads...
+              </div>
+            ) : allLeads.length > 0 ? (
               <div>
-                {/* Dynamic status box based on selected lead status */}
                 {allLeads[selectedLeadIndex] && (
                   <div className={`${getLeadStatusColor(allLeads[selectedLeadIndex].leadStatus)} rounded-lg p-3 mb-4`}>
                     <div className="font-bold text-gray-900">{getStatusDisplayText(allLeads[selectedLeadIndex].leadStatus)}</div>
@@ -291,7 +320,12 @@ const ReceptionistMainCard = ({ loading, customerData, from, vehicleData, allLea
             <h2 className="text-base font-bold text-blue-900">Sales Assignment</h2>
           </div>
 
-          {salesAgent ? (
+          {loadingStage < 4 ? (
+            <div className="text-center text-gray-500 py-8">
+              <div className="w-8 h-8 border-3 border-gray-300 border-t-blue-500 rounded-full animate-spin mx-auto mb-3"></div>
+              Loading sales info...
+            </div>
+          ) : salesAgent ? (
             <div>
               <div className="flex items-center gap-3 mb-4" style={{ backgroundColor: '#f9fafb', padding: '12px', borderRadius: '8px' }}>
                 <div className="w-12 h-12 rounded-full overflow-hidden bg-gradient-to-br from-purple-400 to-pink-400 flex items-center justify-center">
@@ -304,23 +338,9 @@ const ReceptionistMainCard = ({ loading, customerData, from, vehicleData, allLea
                   <div className="text-sm text-gray-600">
                     {salesAgent.userTypes?.join(', ') || 'Sales Representative'}
                   </div>
-                  {/* <div className="flex items-center gap-2 mt-1">
-                    <span className="bg-green-100 text-green-700 text-sm px-2 py-0.5 rounded">Available</span>
-                    <span className="text-sm text-gray-600">Ext: N/A</span>
-                  </div> */}
                 </div>
-                {/* <button 
-                  className="text-white text-sm font-medium py-2 px-4 rounded-md flex items-center gap-2 transition-colors"
-                  style={{ backgroundColor: '#2b4f7d' }}
-                  onMouseEnter={(e) => e.target.style.backgroundColor = '#1e3a5f'}
-                  onMouseLeave={(e) => e.target.style.backgroundColor = '#2b4f7d'}
-                >
-                  <Phone className="w-4 h-4" />
-                  Transfer
-                </button> */}
               </div>
 
-              {/* Add email if available */}
               {salesAgent.emailAddress && (
                 <div className="mb-3 px-3">
                   <div className="flex items-center gap-2 text-sm">
@@ -333,7 +353,6 @@ const ReceptionistMainCard = ({ loading, customerData, from, vehicleData, allLea
               )}
 
               <div className="space-y-3 pt-3 border-t border-gray-200">
-                {/* Lead Priority with conditional styling */}
                 <div className="flex justify-between items-start">
                   <div className="text-medium font-semibold text-black-600 min-w-[140px]">Lead Priority:</div>
                   <div className="text-gray-900 text-right">
@@ -345,7 +364,6 @@ const ReceptionistMainCard = ({ loading, customerData, from, vehicleData, allLea
                   </div>
                 </div>
 
-                {/* Lead Source */}
                 <div className="flex justify-between items-start">
                   <div className="text-medium font-semibold text-black-600 min-w-[140px]">Lead Source:</div>
                   <div className="text-gray-900 text-right">
@@ -353,7 +371,6 @@ const ReceptionistMainCard = ({ loading, customerData, from, vehicleData, allLea
                   </div>
                 </div>
 
-                {/* Time Created */}
                 <div className="flex justify-between items-start">
                   <div className="text-medium font-semibold text-black-600 min-w-[140px]">Created On:</div>
                   <div className="text-gray-900 text-right">

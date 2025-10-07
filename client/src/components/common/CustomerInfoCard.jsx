@@ -3,7 +3,7 @@
 import React from 'react';
 import { Clock, User, Check, ChevronLeft, ChevronRight, Users } from 'lucide-react';
 
-const CustomerInfoCard = ({ customerData, from, loading, selectedContactIndex, onContactChange }) => {
+const CustomerInfoCard = ({ customerData, from, loading, selectedContactIndex, onContactChange, loadingStage = 4 }) => {
     const formatPhoneNumber = (phone) => {
         if (!phone) return '(555) 123-4567';
         const cleaned = phone.replace(/\D/g, '');
@@ -14,16 +14,57 @@ const CustomerInfoCard = ({ customerData, from, loading, selectedContactIndex, o
         return phone;
     };
 
-    if (loading) {
+    // Stage 1: Only phone number available
+    if (loadingStage === 1 || loading) {
         return (
             <div className="bg-[#f7f8f9] border-b border-gray-200">
                 <div className="px-4 py-4 flex items-center justify-between">
                     <div className="flex items-center gap-4">
-                        <div className="w-20 h-20 bg-gray-300 rounded-full animate-pulse"></div>
-                        <div>
-                            <div className="h-7 bg-gray-300 rounded w-40 mb-2 animate-pulse"></div>
-                            <div className="h-5 bg-gray-300 rounded w-32 mb-1 animate-pulse"></div>
-                            <div className="h-4 bg-gray-300 rounded w-24 animate-pulse"></div>
+                        <div className="w-20 h-20 rounded-full overflow-hidden bg-gray-300 border-[3px] border-white flex-shrink-0 animate-pulse">
+                            <div className="w-full h-full bg-gray-300 flex items-center justify-center">
+                                <User className="w-10 h-10 text-gray-600" />
+                            </div>
+                        </div>
+
+                        <div className="flex flex-col justify-center">
+                            <div className="flex items-center gap-2">
+                                <h2 className="text-2xl font-semibold text-gray-900 animate-pulse">
+                                    Loading...
+                                </h2>
+                            </div>
+                            <div className="flex items-center gap-2 font-semibold text-[#1e3a8a]">
+                                <span className="text-lg">{formatPhoneNumber(from)}</span>
+                            </div>
+                            <div className="text-sm text-blue-600 mt-1 flex items-center gap-2">
+                                <div className="w-2 h-2 bg-blue-600 rounded-full animate-ping"></div>
+                                Fetching customer information...
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="flex items-center gap-6 mr-19">
+                        <div className="flex items-center gap-6">
+                            <div className="flex flex-col items-center gap-1">
+                                <div className="relative w-14 h-14 flex items-center justify-center">
+                                    <div className="w-14 h-14 bg-gray-200 rounded-full absolute animate-pulse"></div>
+                                    <button className="relative w-6 h-6 bg-gray-400 rounded-full flex items-center justify-center">
+                                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                                    </button>
+                                </div>
+                                <span className="text-xs text-gray-600">Searching...</span>
+                            </div>
+
+                            <div className="flex flex-col items-center gap-1">
+                                <div className="relative w-14 h-14 flex items-center justify-center">
+                                    <div className="w-14 h-14 bg-[#dbeafe] rounded-full absolute"></div>
+                                    <button className="relative w-6 h-6 bg-[#2563eb] hover:bg-[#1d4ed8] rounded-full flex items-center justify-center transition-colors">
+                                        <Clock className="w-6 h-6 text-white" />
+                                    </button>
+                                </div>
+                                <span className="text-xs text-gray-600">
+                                    {new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+                                </span>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -31,11 +72,10 @@ const CustomerInfoCard = ({ customerData, from, loading, selectedContactIndex, o
         );
     }
 
-    // Check if we have multiple contacts
+    // Stage 2+: Customer data available
     const hasMultipleContacts = customerData?.hasMultipleContacts && customerData?.allContactsData?.length > 1;
     const allContactsData = customerData?.allContactsData || [];
     
-    // Get current contact data based on selection
     const currentContactData = hasMultipleContacts 
         ? allContactsData[selectedContactIndex] 
         : { contact: customerData?.contact };
@@ -45,6 +85,9 @@ const CustomerInfoCard = ({ customerData, from, loading, selectedContactIndex, o
     const phoneNumber = from || currentContact?.phone || '(555) 123-4567';
     const CustName = currentContact?.fullName || 'N/A';
     const CustId = currentContact?.contactId || 'N/A';
+
+    // Show loading indicator for stages 2-3
+    const isPartiallyLoaded = loadingStage < 4;
 
     return (
         <div className="bg-[#f7f8f9] border-b border-gray-200">
@@ -61,8 +104,17 @@ const CustomerInfoCard = ({ customerData, from, loading, selectedContactIndex, o
                             <h2 className="text-2xl font-semibold text-gray-900">
                                 {CustName}
                             </h2>
-                            {/* Multiple contacts indicator */}
-                            {hasMultipleContacts && (
+                            {isPartiallyLoaded && (
+                                <div className="flex items-center gap-2 ml-2">
+                                    <div className="bg-blue-100 text-blue-700 px-2 py-1 rounded-full flex items-center gap-1 animate-pulse">
+                                        <div className="w-2 h-2 bg-blue-500 rounded-full animate-ping"></div>
+                                        <span className="text-xs font-semibold">
+                                            Loading details...
+                                        </span>
+                                    </div>
+                                </div>
+                            )}
+                            {hasMultipleContacts && !isPartiallyLoaded && (
                                 <div className="flex items-center gap-2 ml-2">
                                     <div className="bg-blue-100 text-blue-700 px-2 py-1 rounded-full flex items-center gap-1">
                                         <Users className="w-4 h-4" />
@@ -70,7 +122,6 @@ const CustomerInfoCard = ({ customerData, from, loading, selectedContactIndex, o
                                             {selectedContactIndex + 1} of {allContactsData.length} contacts
                                         </span>
                                     </div>
-                                    {/* Navigation buttons */}
                                     <button
                                         onClick={() => onContactChange(Math.max(0, selectedContactIndex - 1))}
                                         disabled={selectedContactIndex === 0}
@@ -105,12 +156,24 @@ const CustomerInfoCard = ({ customerData, from, loading, selectedContactIndex, o
                     <div className="flex items-center gap-6">
                         <div className="flex flex-col items-center gap-1">
                             <div className="relative w-14 h-14 flex items-center justify-center">
-                                <div className="w-14 h-14 bg-[#dcfce7] rounded-full absolute"></div>
-                                <button className="relative w-6 h-6 bg-[#16a34a] hover:bg-[#15803d] rounded-full flex items-center justify-center transition-colors">
-                                    <Check className="w-5 h-5 text-white" />
+                                <div className={`w-14 h-14 rounded-full absolute ${
+                                    isPartiallyLoaded ? 'bg-yellow-100' : 'bg-[#dcfce7]'
+                                }`}></div>
+                                <button className={`relative w-6 h-6 rounded-full flex items-center justify-center transition-colors ${
+                                    isPartiallyLoaded 
+                                        ? 'bg-yellow-500 hover:bg-yellow-600' 
+                                        : 'bg-[#16a34a] hover:bg-[#15803d]'
+                                }`}>
+                                    {isPartiallyLoaded ? (
+                                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                                    ) : (
+                                        <Check className="w-5 h-5 text-white" />
+                                    )}
                                 </button>
                             </div>
-                            <span className="text-xs text-gray-600">CRM Match</span>
+                            <span className="text-xs text-gray-600">
+                                {isPartiallyLoaded ? 'Loading...' : 'CRM Match'}
+                            </span>
                         </div>
 
                         <div className="flex flex-col items-center gap-1">
@@ -128,8 +191,7 @@ const CustomerInfoCard = ({ customerData, from, loading, selectedContactIndex, o
                 </div>
             </div>
 
-            {/* Contact list dropdown when multiple contacts */}
-            {hasMultipleContacts && (
+            {hasMultipleContacts && !isPartiallyLoaded && (
                 <div className="px-4 pb-2 border-t border-gray-100 mt-2">
                     <div className="text-xs text-gray-600 mb-2">All contacts for this number:</div>
                     <div className="flex gap-2 flex-wrap">

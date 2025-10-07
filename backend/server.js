@@ -18,9 +18,15 @@ const WS_URL = 'wss://pbx.bozarthconnect.com/callcontrol/ws';
 const LOGIN_URL = 'https://pbx.bozarthconnect.com/webclient/api/Login/GetAccessToken';
 
 // ============= TESTING CONFIGURATION =============
-const PRODUCTION_MODE = true; // Set to true for production, false for testing
-const TEST_PHONE_NUMBER = '6022909586'; // Phone number to use when PRODUCTION_MODE = false
+const PRODUCTION_MODE = true;
+const TEST_PHONE_NUMBER = '6022909586';
 // ================================================
+
+// ============= CACHE CONFIGURATION =============
+const CUSTOMER_DATA_CACHE_DURATION = 10 * 60 * 1000; // 10 minutes
+const HOT_CACHE_DURATION = 60 * 1000; // 60 seconds for pre-fetched data
+const CALL_CACHE_DURATION = 60000; // 1 minute
+// ==============================================
 
 const VIN_CONFIG = {
   tokenUrl: "https://authentication.vinsolutions.com/connect/token",
@@ -42,14 +48,16 @@ let vinTokenExpiry = null;
 let pbxReconnectAttempts = 0;
 let isConnectingToPBX = false;
 
-// Track processed calls to prevent duplicates
+// ============= CACHE STORAGE =============
+const customerDataCache = new Map();
+const hotCache = new Map();
 const processedCalls = new Map();
-const CALL_CACHE_DURATION = 60000; // 1 minute
+// ========================================
 
 // HEARTBEAT CONFIGURATION
 const HEARTBEAT_INTERVAL = 30000;
 const CLIENT_TIMEOUT = 60000;
-const PBX_PING_INTERVAL = 25000; // Ping 3CX to keep connection alive
+const PBX_PING_INTERVAL = 25000;
 
 const axiosInstance = axios.create({
   httpsAgent: new https.Agent({
@@ -57,10 +65,44 @@ const axiosInstance = axios.create({
   })
 });
 
-// ============= HELPER FUNCTIONS =============
+// ============= CACHE HELPER FUNCTIONS =============
 
-function cleanupOldCalls() {
+function getCacheStats() {
+  const stats = {
+    totalCached: customerDataCache.size,
+    hotCached: hotCache.size,
+    details: []
+  };
+  
+  customerDataCache.forEach((value, key) => {
+    const ageMinutes = ((Date.now() - value.timestamp) / 1000 / 60).toFixed(1);
+    stats.details.push({
+      phone: key,
+      ageMinutes: ageMinutes,
+      hits: value.hits || 0
+    });
+  });
+  
+  return stats;
+}
+
+function cleanupOldCaches() {
   const now = Date.now();
+  
+  for (const [phone, data] of customerDataCache.entries()) {
+    if (now - data.timestamp > CUSTOMER_DATA_CACHE_DURATION) {
+      console.log(`🗑️ Removing expired cache for: ${phone} (age: ${((now - data.timestamp) / 1000 / 60).toFixed(1)} min)`);
+      customerDataCache.delete(phone);
+    }
+  }
+  
+  for (const [phone, data] of hotCache.entries()) {
+    if (now - data.timestamp > HOT_CACHE_DURATION) {
+      console.log(`🗑️ Removing expired hot cache for: ${phone}`);
+      hotCache.delete(phone);
+    }
+  }
+  
   for (const [callId, timestamp] of processedCalls.entries()) {
     if (now - timestamp > CALL_CACHE_DURATION) {
       processedCalls.delete(callId);
@@ -68,9 +110,37 @@ function cleanupOldCalls() {
   }
 }
 
-setInterval(cleanupOldCalls, 30000);
+setInterval(cleanupOldCaches, 30000);
 
-// ============= VINSOLUTIONS FUNCTIONS =============
+function getCachedCustomerData(phoneNumber) {
+  const cached = customerDataCache.get(phoneNumber);
+  
+  if (cached && (Date.now() - cached.timestamp < CUSTOMER_DATA_CACHE_DURATION)) {
+    cached.hits = (cached.hits || 0) + 1;
+    const ageSeconds = ((Date.now() - cached.timestamp) / 1000).toFixed(1);
+    console.log(`\n${'='.repeat(60)}`);
+    console.log(`🎯 CACHE HIT! Phone: ${phoneNumber}`);
+    console.log(`📊 Cache Stats:`);
+    console.log(`   - Age: ${ageSeconds}s`);
+    console.log(`   - Total Hits: ${cached.hits}`);
+    console.log(`   - Expires in: ${((CUSTOMER_DATA_CACHE_DURATION - (Date.now() - cached.timestamp)) / 1000 / 60).toFixed(1)} min`);
+    console.log(`${'='.repeat(60)}\n`);
+    return cached.data;
+  }
+  
+  return null;
+}
+
+function setCachedCustomerData(phoneNumber, data) {
+  customerDataCache.set(phoneNumber, {
+    data: data,
+    timestamp: Date.now(),
+    hits: 0
+  });
+  console.log(`💾 Cached customer data for: ${phoneNumber}`);
+}
+
+// ============= HELPER FUNCTIONS =============
 
 function extractPhoneDigits(phone) {
   const digits = String(phone).replace(/[^\d]/g, "");
@@ -79,6 +149,23 @@ function extractPhoneDigits(phone) {
   }
   return digits;
 }
+
+// ============= PROGRESSIVE DATA SENDING =============
+
+function sendProgressiveUpdate(userExtension, stage, data, callInfo) {
+  const message = {
+    type: 'progressive_update',
+    stage: stage,
+    data: data,
+    callInfo: callInfo,
+    timestamp: new Date().toISOString()
+  };
+  
+  broadcastToUser(userExtension, message);
+  console.log(`📤 STAGE ${stage} sent to ${userExtension}`);
+}
+
+// ============= VINSOLUTIONS FUNCTIONS =============
 
 async function getVinToken(forceRefresh = false) {
   try {
@@ -371,104 +458,184 @@ async function processLeadsInParallel(leads) {
   return Promise.all(leadPromises);
 }
 
-async function getCompleteCustomerData(phoneNumber) {
+// ============= PROGRESSIVE DATA FETCHING =============
+
+async function fetchCustomerDataProgressive(phoneNumber, userExtension, callInfo) {
+  const overallStartTime = Date.now();
+  console.log(`\n${'='.repeat(70)}`);
+  console.log(`📊 PROGRESSIVE DATA FETCH STARTED for: ${phoneNumber}`);
+  console.log(`${'='.repeat(70)}\n`);
+  
   try {
+    // STAGE 2: Fetch Basic Contact Info
+    const stage2Start = Date.now();
+    console.log(`📥 STAGE 2: Fetching basic contact info...`);
     const contacts = await getContactsByPhone(phoneNumber);
+    const stage2Duration = ((Date.now() - stage2Start) / 1000).toFixed(2);
     
     if (!contacts || contacts.length === 0) {
+      console.log(`❌ No contacts found for: ${phoneNumber} (${stage2Duration}s)`);
+      sendProgressiveUpdate(userExtension, 2, { 
+        contact: null,
+        error: 'No contact found'
+      }, callInfo);
       return null;
     }
     
+    console.log(`✅ STAGE 2 Complete: Found ${contacts.length} contact(s) in ${stage2Duration}s`);
+    
+    // Send Stage 2 data immediately
+    sendProgressiveUpdate(userExtension, 2, {
+      contact: contacts[0],
+      contacts: contacts,
+      hasMultipleContacts: contacts.length > 1
+    }, callInfo);
+    
+    // STAGE 3: Fetch Lead Summaries
+    const stage3Start = Date.now();
+    console.log(`📥 STAGE 3: Fetching lead summaries...`);
+    
     const allContactsDataPromises = contacts.map(async (contact) => {
       const leads = await getLeads(contact.contactId);
-      let allLeadsData = [];
-      let primarySalesRepInfo = null;
-      
-      if (leads.length > 0) {
-        allLeadsData = await processLeadsInParallel(leads);
-        
-        for (const leadData of allLeadsData) {
-          if (leadData.salesRepInfo) {
-            primarySalesRepInfo = leadData.salesRepInfo;
-            break;
-          }
-        }
-      }
-      
-      const salesAssignment = await getUserById(VIN_CONFIG.userId);
-      
-      // Helper function to check if vehicle has complete info (only checking make and model for null)
-      const isVehicleComplete = (vehicle) => {
-        return vehicle.make !== null && vehicle.model !== null && 
-               vehicle.make !== '' && vehicle.model !== '';
-      };
-      
-      // Process each lead's vehicles separately and maintain separation
-      const processedLeadsData = allLeadsData.map(lead => {
-        const vehiclesOfInterest = lead.vehiclesOfInterest || [];
-        const tradeVehicles = lead.tradeVehicles || [];
-        
-        // Separate valid and incomplete vehicles for this lead
-        const validVOI = vehiclesOfInterest.filter(isVehicleComplete);
-        const incompleteVOI = vehiclesOfInterest.filter(v => !isVehicleComplete(v));
-        
-        const validTrade = tradeVehicles.filter(isVehicleComplete);
-        const incompleteTrade = tradeVehicles.filter(v => !isVehicleComplete(v));
-        
-        return {
-          ...lead,
-          vehiclesOfInterest: validVOI,
-          incompleteVehiclesOfInterest: incompleteVOI,
-          tradeVehicles: validTrade,
-          incompleteTradeVehicles: incompleteTrade
-        };
-      });
-      
-      // Collect all vehicles across all leads (for backward compatibility)
-      const allValidVOI = processedLeadsData.flatMap(lead => lead.vehiclesOfInterest || []);
-      const allIncompleteVOI = processedLeadsData.flatMap(lead => lead.incompleteVehiclesOfInterest || []);
-      const allValidTrade = processedLeadsData.flatMap(lead => lead.tradeVehicles || []);
-      const allIncompleteTrade = processedLeadsData.flatMap(lead => lead.incompleteTradeVehicles || []);
-      
-      console.log(`📊 Vehicle separation for contact ${contact.contactId}:`);
-      console.log(`  - Valid vehicles of interest: ${allValidVOI.length}`);
-      console.log(`  - Incomplete vehicles of interest: ${allIncompleteVOI.length}`);
-      console.log(`  - Valid trade vehicles: ${allValidTrade.length}`);
-      console.log(`  - Incomplete trade vehicles: ${allIncompleteTrade.length}`);
-      
-      return {
-        contact,
-        leads,
-        allLeadsData: processedLeadsData, // Use processed data with separated vehicles
-        vehiclesOfInterest: allValidVOI,
-        incompleteVehiclesOfInterest: allIncompleteVOI,
-        tradeVehicles: allValidTrade,
-        incompleteTradeVehicles: allIncompleteTrade,
-        salesAssignment,
-        salesRepInfo: primarySalesRepInfo,
-        leadSource: processedLeadsData[0]?.leadSource || null
-      };
+      return { contact, leads, leadCount: leads.length };
     });
     
-    const allContactsData = await Promise.all(allContactsDataPromises);
+    const contactsWithLeads = await Promise.all(allContactsDataPromises);
+    const stage3Duration = ((Date.now() - stage3Start) / 1000).toFixed(2);
     
-    return {
+    console.log(`✅ STAGE 3 Complete: Fetched lead summaries in ${stage3Duration}s`);
+    
+    // Send Stage 3 data
+    const primaryContactLeads = contactsWithLeads[0];
+    sendProgressiveUpdate(userExtension, 3, {
       contact: contacts[0],
-      leads: allContactsData[0]?.leads || [],
-      allLeadsData: allContactsData[0]?.allLeadsData || [],
-      vehiclesOfInterest: allContactsData[0]?.vehiclesOfInterest || [],
-      incompleteVehiclesOfInterest: allContactsData[0]?.incompleteVehiclesOfInterest || [],
-      tradeVehicles: allContactsData[0]?.tradeVehicles || [],
-      incompleteTradeVehicles: allContactsData[0]?.incompleteTradeVehicles || [],
-      salesAssignment: allContactsData[0]?.salesAssignment,
-      salesRepInfo: allContactsData[0]?.salesRepInfo,
-      leadSource: allContactsData[0]?.leadSource,
+      contacts: contacts,
+      hasMultipleContacts: contacts.length > 1,
+      leads: primaryContactLeads.leads,
+      leadCount: primaryContactLeads.leadCount,
+      allContactsLeadSummary: contactsWithLeads.map(c => ({
+        contactId: c.contact.contactId,
+        fullName: c.contact.fullName,
+        leadCount: c.leadCount
+      }))
+    }, callInfo);
+    
+    // STAGE 4: Fetch Detailed Lead Data (vehicles, sales rep)
+    const stage4Start = Date.now();
+    console.log(`📥 STAGE 4: Fetching detailed lead data...`);
+    
+    const allContactsDetailedData = await Promise.all(
+      contactsWithLeads.map(async ({ contact, leads }) => {
+        let allLeadsData = [];
+        let primarySalesRepInfo = null;
+        
+        if (leads.length > 0) {
+          allLeadsData = await processLeadsInParallel(leads);
+          
+          for (const leadData of allLeadsData) {
+            if (leadData.salesRepInfo) {
+              primarySalesRepInfo = leadData.salesRepInfo;
+              break;
+            }
+          }
+        }
+        
+        const salesAssignment = await getUserById(VIN_CONFIG.userId);
+        
+        const isVehicleComplete = (vehicle) => {
+          return vehicle.make !== null && vehicle.model !== null && 
+                 vehicle.make !== '' && vehicle.model !== '';
+        };
+        
+        const processedLeadsData = allLeadsData.map(lead => {
+          const vehiclesOfInterest = lead.vehiclesOfInterest || [];
+          const tradeVehicles = lead.tradeVehicles || [];
+          
+          const validVOI = vehiclesOfInterest.filter(isVehicleComplete);
+          const incompleteVOI = vehiclesOfInterest.filter(v => !isVehicleComplete(v));
+          
+          const validTrade = tradeVehicles.filter(isVehicleComplete);
+          const incompleteTrade = tradeVehicles.filter(v => !isVehicleComplete(v));
+          
+          return {
+            ...lead,
+            vehiclesOfInterest: validVOI,
+            incompleteVehiclesOfInterest: incompleteVOI,
+            tradeVehicles: validTrade,
+            incompleteTradeVehicles: incompleteTrade
+          };
+        });
+        
+        const allValidVOI = processedLeadsData.flatMap(lead => lead.vehiclesOfInterest || []);
+        const allIncompleteVOI = processedLeadsData.flatMap(lead => lead.incompleteVehiclesOfInterest || []);
+        const allValidTrade = processedLeadsData.flatMap(lead => lead.tradeVehicles || []);
+        const allIncompleteTrade = processedLeadsData.flatMap(lead => lead.incompleteTradeVehicles || []);
+        
+        return {
+          contact,
+          leads,
+          allLeadsData: processedLeadsData,
+          vehiclesOfInterest: allValidVOI,
+          incompleteVehiclesOfInterest: allIncompleteVOI,
+          tradeVehicles: allValidTrade,
+          incompleteTradeVehicles: allIncompleteTrade,
+          salesAssignment,
+          salesRepInfo: primarySalesRepInfo,
+          leadSource: processedLeadsData[0]?.leadSource || null
+        };
+      })
+    );
+    
+    const stage4Duration = ((Date.now() - stage4Start) / 1000).toFixed(2);
+    console.log(`✅ STAGE 4 Complete: Detailed lead data in ${stage4Duration}s`);
+    
+    // Build final complete data structure
+    const completeData = {
+      contact: contacts[0],
+      leads: allContactsDetailedData[0]?.leads || [],
+      allLeadsData: allContactsDetailedData[0]?.allLeadsData || [],
+      vehiclesOfInterest: allContactsDetailedData[0]?.vehiclesOfInterest || [],
+      incompleteVehiclesOfInterest: allContactsDetailedData[0]?.incompleteVehiclesOfInterest || [],
+      tradeVehicles: allContactsDetailedData[0]?.tradeVehicles || [],
+      incompleteTradeVehicles: allContactsDetailedData[0]?.incompleteTradeVehicles || [],
+      salesAssignment: allContactsDetailedData[0]?.salesAssignment,
+      salesRepInfo: allContactsDetailedData[0]?.salesRepInfo,
+      leadSource: allContactsDetailedData[0]?.leadSource,
       contacts,
-      allContactsData,
+      allContactsData: allContactsDetailedData,
       hasMultipleContacts: contacts.length > 1
     };
+    
+    // Send Stage 4 (Complete) data
+    sendProgressiveUpdate(userExtension, 4, completeData, callInfo);
+    
+    // ALSO send in legacy format for backward compatibility
+    const legacyNotification = {
+      type: 'call_notification',
+      data: {
+        ...callInfo,
+        customerData: completeData
+      }
+    };
+    broadcastToUser(userExtension, legacyNotification);
+    console.log(`📤 Legacy format sent to ${userExtension}`);
+    
+    // Cache the complete data
+    setCachedCustomerData(phoneNumber, completeData);
+    
+    const totalDuration = ((Date.now() - overallStartTime) / 1000).toFixed(2);
+    console.log(`\n${'='.repeat(70)}`);
+    console.log(`✅ PROGRESSIVE FETCH COMPLETE in ${totalDuration}s`);
+    console.log(`   Stage 2 (Contact):        ${stage2Duration}s`);
+    console.log(`   Stage 3 (Lead Summary):   ${stage3Duration}s`);
+    console.log(`   Stage 4 (Complete Data):  ${stage4Duration}s`);
+    console.log(`${'='.repeat(70)}\n`);
+    
+    return completeData;
+    
   } catch (error) {
-    console.error("❌ Error in getCompleteCustomerData:", error.message);
+    const duration = ((Date.now() - overallStartTime) / 1000).toFixed(2);
+    console.error(`❌ Error in progressive fetch (${duration}s):`, error.message);
     return null;
   }
 }
@@ -559,7 +726,6 @@ async function getParticipantDetails(entity, retryCount = 0) {
 
     return response.data;
   } catch (error) {
-    // If 401/403 and haven't retried, refresh token and retry once
     if ((error.response?.status === 401 || error.response?.status === 403) && retryCount === 0) {
       console.log('🔄 Token issue, refreshing and retrying...');
       await getAccessToken();
@@ -573,7 +739,6 @@ async function getParticipantDetails(entity, retryCount = 0) {
 let pbxPingInterval = null;
 
 async function connectTo3CXWebSocket() {
-  // Prevent concurrent connection attempts
   if (isConnectingToPBX) {
     console.log('⏳ Already connecting to 3CX...');
     return;
@@ -609,7 +774,6 @@ async function connectTo3CXWebSocket() {
       pbxReconnectAttempts = 0;
       isConnectingToPBX = false;
 
-      // Start ping interval to keep connection alive
       pbxPingInterval = setInterval(() => {
         if (pbxWebSocket && pbxWebSocket.readyState === WebSocket.OPEN) {
           pbxWebSocket.ping();
@@ -622,75 +786,108 @@ async function connectTo3CXWebSocket() {
     });
 
     pbxWebSocket.on('message', async (data) => {
-  try {
-    const message = JSON.parse(data.toString());
+      try {
+        const message = JSON.parse(data.toString());
 
-    if (message.sequence && message.event && message.event.entity) {
-      if (message.sequence > latestSequence) {
-        latestSequence = message.sequence;
+        if (message.sequence && message.event && message.event.entity) {
+          if (message.sequence > latestSequence) {
+            latestSequence = message.sequence;
 
-        const entity = message.event.entity;
-        const entityParts = entity.split('/');
-        
-        if (entityParts.length >= 3 && entityParts[1] === 'callcontrol') {
-          const userExtension = entityParts[2];
-          
-          // Create unique call identifier
-          const callKey = `${userExtension}-${message.sequence}-${Date.now()}`;
-          
-          // Check if we've recently processed this call
-          if (processedCalls.has(callKey)) {
-            return; // Skip duplicate
-          }
-          
-          processedCalls.set(callKey, Date.now());
-          
-          console.log(`\n🔔 CALL for extension ${userExtension}`);
-          
-          const participantDetails = await getParticipantDetails(entity);
-          
-          if (participantDetails) {
-            const callerNumber = participantDetails.party_caller_id;
-            console.log(`📞 Original Caller from 3CX: ${callerNumber}`);
+            const entity = message.event.entity;
+            const entityParts = entity.split('/');
             
-            // TESTING MODE TOGGLE
-            let vinPhoneNumber;
-            if (PRODUCTION_MODE) {
-              // Production: Use actual caller number from 3CX
-              vinPhoneNumber = extractPhoneDigits(callerNumber);
-              console.log(`✅ PRODUCTION MODE: Using actual number: ${vinPhoneNumber}`);
-            } else {
-              // Testing: Use hardcoded test number
-              vinPhoneNumber = TEST_PHONE_NUMBER;
-              console.log(`🧪 TESTING MODE: Using hardcoded number: ${vinPhoneNumber}`);
-            }
-            
-            const customerData = await getCompleteCustomerData(vinPhoneNumber);
-            
-            const notification = {
-              type: 'call_notification',
-              data: {
-                callerName: participantDetails.party_caller_name,
-                callerNumber: participantDetails.party_caller_id,
-                extension: participantDetails.dn,
-                status: participantDetails.status,
-                partyDnType: participantDetails.party_dn_type,
-                callId: participantDetails.callid,
-                timestamp: new Date().toISOString(),
-                userExtension: userExtension,
-                customerData: customerData
+            if (entityParts.length >= 3 && entityParts[1] === 'callcontrol') {
+              const userExtension = entityParts[2];
+              const callKey = `${userExtension}-${message.sequence}-${Date.now()}`;
+              
+              if (processedCalls.has(callKey)) {
+                return;
               }
-            };
-
-            broadcastToUser(userExtension, notification);
+              
+              processedCalls.set(callKey, Date.now());
+              
+              const callReceiveTime = Date.now();
+              console.log(`\n${'='.repeat(70)}`);
+              console.log(`📞 INCOMING CALL DETECTED`);
+              console.log(`${'='.repeat(70)}`);
+              console.log(`👤 Extension: ${userExtension}`);
+              console.log(`⏰ Timestamp: ${new Date().toISOString()}`);
+              
+              const participantDetails = await getParticipantDetails(entity);
+              
+              if (participantDetails) {
+                const pbxFetchTime = Date.now();
+                const pbxDuration = ((pbxFetchTime - callReceiveTime) / 1000).toFixed(3);
+                
+                const callerNumber = participantDetails.party_caller_id;
+                
+                console.log(`\n📋 3CX CALL DETAILS RECEIVED (${pbxDuration}s):`);
+                console.log(`   Caller Name: ${participantDetails.party_caller_name}`);
+                console.log(`   Caller Number: ${callerNumber}`);
+                console.log(`   Status: ${participantDetails.status}`);
+                console.log(`   Call ID: ${participantDetails.callid}`);
+                
+                let vinPhoneNumber;
+                if (PRODUCTION_MODE) {
+                  vinPhoneNumber = extractPhoneDigits(callerNumber);
+                  console.log(`✅ PRODUCTION MODE: Using actual number: ${vinPhoneNumber}`);
+                } else {
+                  vinPhoneNumber = TEST_PHONE_NUMBER;
+                  console.log(`🧪 TESTING MODE: Using test number: ${vinPhoneNumber}`);
+                }
+                
+                const callInfo = {
+                  callerName: participantDetails.party_caller_name,
+                  callerNumber: participantDetails.party_caller_id,
+                  extension: participantDetails.dn,
+                  status: participantDetails.status,
+                  partyDnType: participantDetails.party_dn_type,
+                  callId: participantDetails.callid,
+                  timestamp: new Date().toISOString(),
+                  userExtension: userExtension
+                };
+                
+                // STAGE 1: Send immediate notification with phone number only
+                console.log(`\n📤 STAGE 1: Sending immediate phone number...`);
+                sendProgressiveUpdate(userExtension, 1, {
+                  phoneNumber: vinPhoneNumber
+                }, callInfo);
+                
+                // Check cache first
+                const cachedData = getCachedCustomerData(vinPhoneNumber);
+                
+                if (cachedData) {
+                  // Send cached data immediately as complete
+                  console.log(`🎯 Using cached data - sending as complete`);
+                  sendProgressiveUpdate(userExtension, 4, cachedData, callInfo);
+                  
+                  // ALSO send in legacy format for backward compatibility
+                  const legacyNotification = {
+                    type: 'call_notification',
+                    data: {
+                      ...callInfo,
+                      customerData: cachedData
+                    }
+                  };
+                  broadcastToUser(userExtension, legacyNotification);
+                  console.log(`📤 Legacy format sent to ${userExtension}`);
+                } else {
+                  // Start progressive fetch
+                  console.log(`🔄 Starting progressive data fetch...`);
+                  await fetchCustomerDataProgressive(vinPhoneNumber, userExtension, callInfo);
+                }
+                
+                const totalCallHandlingTime = ((Date.now() - callReceiveTime) / 1000).toFixed(2);
+                console.log(`\n⏱️ Total call handling time: ${totalCallHandlingTime}s`);
+                console.log(`${'='.repeat(70)}\n`);
+              }
+            }
           }
         }
+      } catch (error) {
+        console.error('❌ Error processing message:', error.message);
       }
-    }
-  } catch (error) {
-    console.error('❌ Error processing message:', error.message);
-  }
-});
+    });
 
     pbxWebSocket.on('error', (error) => {
       console.error('❌ 3CX WebSocket error:', error.message);
@@ -706,7 +903,6 @@ async function connectTo3CXWebSocket() {
         pbxPingInterval = null;
       }
 
-      // Exponential backoff for reconnection
       const delay = Math.min(5000 * Math.pow(1.5, pbxReconnectAttempts), 30000);
       pbxReconnectAttempts++;
       
@@ -742,10 +938,7 @@ function broadcastToUser(username, message) {
     }
   });
   
-  // Clean up dead clients
   deadClients.forEach(client => connectedClients.delete(client));
-  
-  console.log(`✅ Sent to ${sentCount} client(s) for ${username}`);
   
   if (sentCount === 0) {
     console.warn(`⚠️ No active clients for user ${username}`);
@@ -851,6 +1044,8 @@ app.get('/health', (req, res) => {
     return acc;
   }, { authenticated: 0, unauthenticated: 0, users: {} });
 
+  const cacheStats = getCacheStats();
+
   res.json({ 
     status: 'ok', 
     pbxConnected: pbxWebSocket && pbxWebSocket.readyState === WebSocket.OPEN,
@@ -859,7 +1054,13 @@ app.get('/health', (req, res) => {
     latestSequence: latestSequence,
     tokenValid: accessToken && Date.now() < tokenExpiryTime,
     uptime: process.uptime(),
-    pbxReconnectAttempts: pbxReconnectAttempts
+    pbxReconnectAttempts: pbxReconnectAttempts,
+    cache: {
+      customerDataCache: cacheStats.totalCached,
+      hotCache: cacheStats.hotCached,
+      cacheDurationMinutes: CUSTOMER_DATA_CACHE_DURATION / 1000 / 60,
+      details: cacheStats.details
+    }
   });
 });
 
@@ -871,12 +1072,16 @@ server.listen(PORT, '0.0.0.0', async () => {
   console.log(`${'='.repeat(60)}`);
   console.log(`Server running on port ${PORT}`);
   
-  // Show current mode
   if (PRODUCTION_MODE) {
     console.log(`✅ MODE: PRODUCTION (using real phone numbers)`);
   } else {
     console.log(`🧪 MODE: TESTING (using test number: ${TEST_PHONE_NUMBER})`);
   }
+  
+  console.log(`\n📊 CACHE CONFIGURATION:`);
+  console.log(`   - Customer Data Cache: ${CUSTOMER_DATA_CACHE_DURATION / 1000 / 60} minutes`);
+  console.log(`   - Hot Cache (Pre-fetch): ${HOT_CACHE_DURATION / 1000} seconds`);
+  console.log(`\n📡 PROGRESSIVE LOADING: Enabled (4 stages)`);
   
   console.log(`${'='.repeat(60)}\n`);
   

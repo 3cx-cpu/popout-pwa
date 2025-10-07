@@ -1,15 +1,13 @@
-// client\src\App.jsx
-
 import { useState, useEffect, useRef, useCallback } from 'react';
 import './App.css';
 import Dashboard from './pages/Dashboard';
 import Header from './components/common/Header';
 
 // CONSTANTS
-const RECONNECT_INTERVAL = 3000; // 3 seconds
+const RECONNECT_INTERVAL = 3000;
 const MAX_RECONNECT_ATTEMPTS = 10;
-const PING_INTERVAL = 30000; // 30 seconds - match server heartbeat
-const PONG_TIMEOUT = 10000; // 10 seconds to wait for pong response
+const PING_INTERVAL = 30000;
+const PONG_TIMEOUT = 10000;
 
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -24,6 +22,7 @@ function App() {
   const [customerData, setCustomerData] = useState(null);
   const [callInfo, setCallInfo] = useState(null);
   const [reconnectAttempts, setReconnectAttempts] = useState(0);
+  const [loadingStage, setLoadingStage] = useState(0);
   
   const wsRef = useRef(null);
   const audioRef = useRef(null);
@@ -75,7 +74,7 @@ function App() {
     }
     
     if (wsRef.current) {
-      wsRef.current.onclose = null; // Prevent reconnection on manual close
+      wsRef.current.onclose = null;
       wsRef.current.onerror = null;
       wsRef.current.onmessage = null;
       wsRef.current.onopen = null;
@@ -91,7 +90,6 @@ function App() {
   }, []);
 
   const startPingInterval = useCallback(() => {
-    // Clear any existing ping interval
     if (pingIntervalRef.current) {
       clearInterval(pingIntervalRef.current);
     }
@@ -103,7 +101,6 @@ function App() {
         try {
           wsRef.current.send(JSON.stringify({ type: 'ping' }));
           
-          // Set timeout for pong response
           if (pongTimeoutRef.current) {
             clearTimeout(pongTimeoutRef.current);
           }
@@ -124,7 +121,6 @@ function App() {
   }, []);
 
   const connectWebSocket = useCallback(() => {
-    // Prevent multiple simultaneous reconnection attempts
     if (isReconnectingRef.current) {
       console.log('⏳ Reconnection already in progress...');
       return;
@@ -154,21 +150,19 @@ function App() {
         setReconnectAttempts(0);
         isReconnectingRef.current = false;
         
-        // Authenticate immediately after connection
         console.log('🔐 Authenticating user:', currentUser.username);
         ws.send(JSON.stringify({ 
           type: 'authenticate', 
           username: currentUser.username 
         }));
         
-        // Start heartbeat ping
         startPingInterval();
       };
 
       ws.onmessage = (event) => {
         try {
           const message = JSON.parse(event.data);
-          console.log('📨 Received message:', message.type);
+          console.log('📨 Received message type:', message.type, message);
           
           if (message.type === 'pong') {
             console.log('📥 Received pong from server');
@@ -179,8 +173,15 @@ function App() {
             return;
           }
           
-          if (message.type === 'call_notification' && 
+          // Handle progressive updates
+          if (message.type === 'progressive_update') {
+            console.log('🔄 Processing progressive update, stage:', message.stage);
+            handleProgressiveUpdate(message);
+          } 
+          // Handle legacy call notifications (OLD FORMAT - for backward compatibility)
+          else if (message.type === 'call_notification' && 
               message.data.userExtension === currentUser.username) {
+            console.log('📞 Processing legacy call notification');
             handleIncomingCall(message.data);
           } else if (message.type === 'authenticated') {
             console.log('✅ WebSocket authenticated for user:', currentUser.username);
@@ -202,13 +203,11 @@ function App() {
         setConnectionStatus('disconnected');
         isReconnectingRef.current = false;
         
-        // Clear ping interval
         if (pingIntervalRef.current) {
           clearInterval(pingIntervalRef.current);
           pingIntervalRef.current = null;
         }
 
-        // Attempt reconnection if authenticated
         if (isAuthenticated && reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
           const delay = Math.min(RECONNECT_INTERVAL * Math.pow(1.5, reconnectAttempts), 30000);
           console.log(`🔄 Reconnecting in ${delay}ms...`);
@@ -230,6 +229,117 @@ function App() {
       isReconnectingRef.current = false;
     }
   }, [currentUser, isAuthenticated, reconnectAttempts, startPingInterval]);
+
+  const handleProgressiveUpdate = (message) => {
+    const { stage, data, callInfo } = message;
+    
+    console.log(`\n${'='.repeat(60)}`);
+    console.log(`📊 Progressive Update - Stage ${stage}`);
+    console.log(`📦 Data:`, data);
+    console.log(`📞 Call Info:`, callInfo);
+    console.log(`${'='.repeat(60)}\n`);
+    
+    // Stage 1: Phone number only - Show popup immediately
+    if (stage === 1) {
+      console.log('🚀 STAGE 1: Showing popup with phone number');
+      setLoadingStage(1);
+      setCallInfo({
+        callerNumber: data.phoneNumber,
+        callerName: 'Loading...',
+        ...callInfo
+      });
+      setCustomerData(null); // Clear previous data
+      setShowCustomerPopup(true);
+      
+      audioRef.current?.play().catch(() => console.log('🔇 Audio play prevented'));
+      
+      if ('Notification' in window && Notification.permission === 'granted') {
+        new Notification('Incoming Call', {
+          body: `Call from ${data.phoneNumber}`,
+          icon: '/icon-192.png',
+          requireInteraction: true
+        });
+      }
+    }
+    
+    // Stage 2: Basic contact info
+    else if (stage === 2) {
+      console.log('📇 STAGE 2: Contact info received', data.contact);
+      setLoadingStage(2);
+      setCustomerData(prev => ({
+        ...prev,
+        contact: data.contact,
+        contacts: data.contacts,
+        hasMultipleContacts: data.hasMultipleContacts
+      }));
+      
+      if (data.contact) {
+        setCallInfo(prev => ({
+          ...prev,
+          callerName: data.contact.fullName || 'Unknown'
+        }));
+        console.log('✅ Updated caller name:', data.contact.fullName);
+      }
+    }
+    
+    // Stage 3: Lead summaries
+    else if (stage === 3) {
+      console.log('📋 STAGE 3: Lead summaries received, lead count:', data.leadCount);
+      setLoadingStage(3);
+      setCustomerData(prev => ({
+        ...prev,
+        ...data,
+        leads: data.leads,
+        leadCount: data.leadCount
+      }));
+    }
+    
+    // Stage 4: Complete data
+    else if (stage === 4) {
+      console.log('✅ STAGE 4: Complete data received');
+      console.log('📦 Complete customer data:', data);
+      setLoadingStage(4);
+      setCustomerData(data);
+      
+      // Add to notifications list
+      const notification = { 
+        id: Date.now(), 
+        ...callInfo,
+        customerData: data
+      };
+      setNotifications(prev => [notification, ...prev]);
+      console.log('✅ Customer data fully loaded and popup updated');
+    }
+  };
+
+  const handleIncomingCall = (callData) => {
+    console.log('📞 Legacy call notification:', callData);
+    const notification = { id: Date.now(), ...callData };
+    setNotifications(prev => [notification, ...prev]);
+    
+    if (callData.customerData) {
+      setCustomerData(callData.customerData);
+      setCallInfo({
+        callerNumber: callData.callerNumber,
+        callerName: callData.customerData?.contact?.fullName || callData.callerName
+      });
+      setShowCustomerPopup(true);
+      setLoadingStage(4); // Legacy = complete data
+    }
+
+    audioRef.current?.play().catch(() => console.log('🔇 Audio play prevented'));
+
+    if ('Notification' in window && Notification.permission === 'granted') {
+      const customerName = callData.customerData?.contact?.fullName || 
+                          callData.callerName || 'Unknown';
+      new Notification('Incoming Call', {
+        body: `${customerName} (${callData.callerNumber})`,
+        icon: '/icon-192.png',
+        tag: callData.callId,
+        requireInteraction: true
+      });
+    }
+  };
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -273,41 +383,14 @@ function App() {
     setCustomerData(null);
     setConnectionStatus('disconnected');
     setReconnectAttempts(0);
-  };
-
-  const handleIncomingCall = (callData) => {
-    console.log('📞 Incoming call with customer data:', callData);
-    const notification = { id: Date.now(), ...callData };
-    setNotifications(prev => [notification, ...prev]);
-    
-    if (callData.customerData) {
-      console.log('📊 Showing customer dashboard with data');
-      setCustomerData(callData.customerData);
-      setCallInfo({
-        callerNumber: callData.callerNumber,
-        callerName: callData.customerData?.contact?.fullName || callData.callerName
-      });
-      setShowCustomerPopup(true);
-    }
-
-    audioRef.current?.play().catch(() => console.log('🔇 Audio play prevented'));
-
-    if ('Notification' in window && Notification.permission === 'granted') {
-      const customerName = callData.customerData?.contact?.fullName || 
-                          callData.callerName || 'Unknown';
-      new Notification('Incoming Call', {
-        body: `${customerName} (${callData.callerNumber})`,
-        icon: '/icon-192.png',
-        tag: callData.callId,
-        requireInteraction: true
-      });
-    }
+    setLoadingStage(0);
   };
 
   const closeCustomerPopup = () => {
     setShowCustomerPopup(false);
     setCustomerData(null);
     setCallInfo(null);
+    setLoadingStage(0);
   };
 
   const getStatusColor = () => {
@@ -378,91 +461,92 @@ function App() {
     );
   }
 
-  // Waiting Screen with Dashboard
-return (
-  <div className="app">
-    {!showCustomerPopup ? (
-      <>
-        <Header 
-          currentUser={currentUser}
-          connectionStatus={connectionStatus}
-          getStatusColor={getStatusColor}
-          getStatusText={getStatusText}
-          handleLogout={handleLogout}
-          reconnectAttempts={reconnectAttempts}
-          MAX_RECONNECT_ATTEMPTS={MAX_RECONNECT_ATTEMPTS}
-          connectWebSocket={connectWebSocket}
-        />
-        <audio ref={audioRef} src="/notification.mp3" preload="auto" />
-        <main className="main-content">
-          <div className="notifications-header">
-            <h2>Recent Calls ({notifications.length})</h2>
-            {notifications.length > 0 && (
-              <button className="btn-clear" onClick={() => setNotifications([])}>
-                Clear All
-              </button>
-            )}
-          </div>
-          {notifications.length === 0 ? (
-            <div className="empty-state">
-              <p>No calls yet. Waiting for incoming calls...</p>
-              {connectionStatus !== 'connected' && (
-                <p className="connection-warning">
-                  Connection status: {getStatusText()}
-                </p>
+  // Main App
+  return (
+    <div className="app">
+      {!showCustomerPopup ? (
+        <>
+          <Header 
+            currentUser={currentUser}
+            connectionStatus={connectionStatus}
+            getStatusColor={getStatusColor}
+            getStatusText={getStatusText}
+            handleLogout={handleLogout}
+            reconnectAttempts={reconnectAttempts}
+            MAX_RECONNECT_ATTEMPTS={MAX_RECONNECT_ATTEMPTS}
+            connectWebSocket={connectWebSocket}
+          />
+          <audio ref={audioRef} src="/notification.mp3" preload="auto" />
+          <main className="main-content">
+            <div className="notifications-header">
+              <h2>Recent Calls ({notifications.length})</h2>
+              {notifications.length > 0 && (
+                <button className="btn-clear" onClick={() => setNotifications([])}>
+                  Clear All
+                </button>
               )}
             </div>
-          ) : (
-            <div className="notifications-list">
-              {notifications.map((notification) => (
-                <div key={notification.id} className="notification-card">
-                  <div className="notification-header">
-                    <h3>
-                      {notification.customerData?.contact?.fullName || 
-                       notification.callerName || 'Unknown Caller'}
-                    </h3>
-                    <span className="time">
-                      {new Date(notification.timestamp).toLocaleTimeString()}
-                    </span>
+            {notifications.length === 0 ? (
+              <div className="empty-state">
+                <p>No calls yet. Waiting for incoming calls...</p>
+                {connectionStatus !== 'connected' && (
+                  <p className="connection-warning">
+                    Connection status: {getStatusText()}
+                  </p>
+                )}
+              </div>
+            ) : (
+              <div className="notifications-list">
+                {notifications.map((notification) => (
+                  <div key={notification.id} className="notification-card">
+                    <div className="notification-header">
+                      <h3>
+                        {notification.customerData?.contact?.fullName || 
+                         notification.callerName || 'Unknown Caller'}
+                      </h3>
+                      <span className="time">
+                        {new Date(notification.timestamp).toLocaleTimeString()}
+                      </span>
+                    </div>
+                    <div className="notification-body">
+                      <p><strong>Number:</strong> {notification.callerNumber}</p>
+                      <p><strong>Extension:</strong> {notification.extension}</p>
+                      {notification.customerData?.contact && (
+                        <>
+                          <p><strong>Customer ID:</strong> {notification.customerData.contact.contactId}</p>
+                          <p><strong>Leads:</strong> {notification.customerData.leads?.length || 0}</p>
+                        </>
+                      )}
+                      <p><strong>Status:</strong> <span className="status-badge-small">{notification.status}</span></p>
+                    </div>
                   </div>
-                  <div className="notification-body">
-                    <p><strong>Number:</strong> {notification.callerNumber}</p>
-                    <p><strong>Extension:</strong> {notification.extension}</p>
-                    {notification.customerData?.contact && (
-                      <>
-                        <p><strong>Customer ID:</strong> {notification.customerData.contact.contactId}</p>
-                        <p><strong>Leads:</strong> {notification.customerData.leads?.length || 0}</p>
-                      </>
-                    )}
-                    <p><strong>Status:</strong> <span className="status-badge-small">{notification.status}</span></p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </main>
-      </>
-    ) : (
-      <div className="dashboard-content">
-        <Header 
-          currentUser={currentUser}
-          connectionStatus={connectionStatus}
-          getStatusColor={getStatusColor}
-          getStatusText={getStatusText}
-          handleLogout={handleLogout}
-          reconnectAttempts={reconnectAttempts}
-          MAX_RECONNECT_ATTEMPTS={MAX_RECONNECT_ATTEMPTS}
-          connectWebSocket={connectWebSocket}
-        />
-        <Dashboard 
-          customerDataProp={customerData}
-          fromProp={callInfo?.callerNumber}
-          onClose={closeCustomerPopup}
-        />
-      </div>
-    )}
-  </div>
-);
+                ))}
+              </div>
+            )}
+          </main>
+        </>
+      ) : (
+        <div className="dashboard-content">
+          <Header 
+            currentUser={currentUser}
+            connectionStatus={connectionStatus}
+            getStatusColor={getStatusColor}
+            getStatusText={getStatusText}
+            handleLogout={handleLogout}
+            reconnectAttempts={reconnectAttempts}
+            MAX_RECONNECT_ATTEMPTS={MAX_RECONNECT_ATTEMPTS}
+            connectWebSocket={connectWebSocket}
+          />
+          <Dashboard 
+            customerDataProp={customerData}
+            fromProp={callInfo?.callerNumber}
+            onClose={closeCustomerPopup}
+            loadingStage={loadingStage}
+          />
+        </div>
+      )}
+    </div>
+  );
 }
 
 export default App;
