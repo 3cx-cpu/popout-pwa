@@ -1,3 +1,5 @@
+// client\src\utils\formatters.js
+
 export const formatDuration = (seconds) => {
   const mins = Math.floor(seconds / 60);
   const secs = seconds % 60;

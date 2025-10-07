@@ -1,3 +1,5 @@
+// client/src/components/common/CustomerInfoCard.jsx
+
 import React from 'react';
 import { Clock, User, Check, ChevronLeft, ChevronRight, Users } from 'lucide-react';
 

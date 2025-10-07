@@ -1,3 +1,5 @@
+// client\src\components\common\Header.jsx
+
 import React from 'react';
 import { Phone, X } from 'lucide-react';
 

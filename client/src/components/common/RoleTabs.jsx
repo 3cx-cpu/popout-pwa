@@ -1,3 +1,5 @@
+// client\src\components\common\RoleTabs.jsx
+
 import React from 'react';
 
 const RoleTabs = ({ activeRole, onRoleChange }) => {

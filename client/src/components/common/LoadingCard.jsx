@@ -1,3 +1,5 @@
+// client\src\components\common\LoadingCard.jsx
+
 import React from 'react';
 
 const LoadingCard = () => (

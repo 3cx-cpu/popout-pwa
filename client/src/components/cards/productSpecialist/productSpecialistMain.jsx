@@ -1,3 +1,5 @@
+// client\src\components\cards\productSpecialist\productSpecialistMain.jsx
+
 import React from 'react';
 import { User, Car, RefreshCw, Activity, Users, Phone, Clock, Mail } from 'lucide-react';
 

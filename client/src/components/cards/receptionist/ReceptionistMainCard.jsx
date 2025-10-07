@@ -1,3 +1,5 @@
+// client\src\components\cards\receptionist\ReceptionistMainCard.jsx
+
 import React from 'react';
 import { User, Car, RefreshCw, Activity, Users, Phone, Mail } from 'lucide-react';
 

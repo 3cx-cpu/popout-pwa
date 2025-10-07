@@ -1,3 +1,5 @@
+// client\src\components\common\ConnectionStatusBadge.jsx
+
 import React from 'react';
 
 const ConnectionStatusBadge = ({ connectionStatus }) => {
