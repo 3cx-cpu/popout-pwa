@@ -17,7 +17,11 @@ const TOKEN_URL = `${PBX_BASE_URL}/connect/token`;
 const WS_URL = 'wss://pbx.bozarthconnect.com/callcontrol/ws';
 const LOGIN_URL = 'https://pbx.bozarthconnect.com/webclient/api/Login/GetAccessToken';
 
-// VinSolutions Configuration
+// ============= TESTING CONFIGURATION =============
+const PRODUCTION_MODE = true; // Set to true for production, false for testing
+const TEST_PHONE_NUMBER = '6022909586'; // Phone number to use when PRODUCTION_MODE = false
+// ================================================
+
 const VIN_CONFIG = {
   tokenUrl: "https://authentication.vinsolutions.com/connect/token",
   apiBaseUrl: "https://api.vinsolutions.com",
@@ -33,21 +37,41 @@ let tokenExpiryTime = null;
 let pbxWebSocket = null;
 let latestSequence = 0;
 let connectedClients = new Map();
-
-// VinSolutions token
 let vinToken = null;
 let vinTokenExpiry = null;
+let pbxReconnectAttempts = 0;
+let isConnectingToPBX = false;
 
-// Create axios instance
+// Track processed calls to prevent duplicates
+const processedCalls = new Map();
+const CALL_CACHE_DURATION = 60000; // 1 minute
+
+// HEARTBEAT CONFIGURATION
+const HEARTBEAT_INTERVAL = 30000;
+const CLIENT_TIMEOUT = 60000;
+const PBX_PING_INTERVAL = 25000; // Ping 3CX to keep connection alive
+
 const axiosInstance = axios.create({
   httpsAgent: new https.Agent({
     rejectUnauthorized: false
   })
 });
 
-// ============= VINSOLUTIONS API FUNCTIONS =============
+// ============= HELPER FUNCTIONS =============
 
-// Extract phone digits
+function cleanupOldCalls() {
+  const now = Date.now();
+  for (const [callId, timestamp] of processedCalls.entries()) {
+    if (now - timestamp > CALL_CACHE_DURATION) {
+      processedCalls.delete(callId);
+    }
+  }
+}
+
+setInterval(cleanupOldCalls, 30000);
+
+// ============= VINSOLUTIONS FUNCTIONS =============
+
 function extractPhoneDigits(phone) {
   const digits = String(phone).replace(/[^\d]/g, "");
   if (digits.length === 11 && digits[0] === '1') {
@@ -56,7 +80,6 @@ function extractPhoneDigits(phone) {
   return digits;
 }
 
-// Get VinSolutions Token
 async function getVinToken(forceRefresh = false) {
   try {
     if (!forceRefresh && vinToken && vinTokenExpiry && new Date() < vinTokenExpiry) {
@@ -85,7 +108,6 @@ async function getVinToken(forceRefresh = false) {
   }
 }
 
-// Make VinSolutions Request
 async function makeVinRequest(url, params = {}, headers = {}, retryOnAuth = true) {
   try {
     let token = await getVinToken();
@@ -126,16 +148,13 @@ async function makeVinRequest(url, params = {}, headers = {}, retryOnAuth = true
   }
 }
 
-// Get all contacts by phone
 async function getContactsByPhone(phoneNumber) {
-  console.log(`📞 Fetching contacts for: ${phoneNumber}`);
   const url = `${VIN_CONFIG.apiBaseUrl}/gateway/v1/contact`;
   
   try {
     const response = await makeVinRequest(url, { phone: phoneNumber });
     
     if (response && response.length > 0) {
-      console.log(`✅ Found ${response.length} contact(s)`);
       return response.map((contact) => {
         const contactInfo = contact.ContactInformation;
         return {
@@ -160,7 +179,6 @@ async function getContactsByPhone(phoneNumber) {
   }
 }
 
-// Get leads for contact
 async function getLeads(contactId) {
   const url = `${VIN_CONFIG.apiBaseUrl}/leads`;
   const params = { limit: 100, sortBy: 'Date', contactId };
@@ -192,7 +210,6 @@ async function getLeads(contactId) {
   }
 }
 
-// Get vehicles of interest
 async function getVehiclesOfInterest(leadId) {
   const url = `${VIN_CONFIG.apiBaseUrl}/vehicles/interest`;
   const headers = {
@@ -217,7 +234,6 @@ async function getVehiclesOfInterest(leadId) {
         interiorColor: vehicle.interiorColor || "",
         stockNumber: vehicle.stockNumber || "",
         description: vehicle.description || "",
-        // Additional fields from autoEntity
         trimName: vehicle.autoEntity?.trimName || "",
         autoEntityMileage: vehicle.autoEntity?.mileage || null,
         interiorColorName: vehicle.autoEntity?.interiorColorName || "",
@@ -232,7 +248,6 @@ async function getVehiclesOfInterest(leadId) {
   }
 }
 
-// Get trade vehicles
 async function getTradeVehicles(leadId) {
   const url = `${VIN_CONFIG.apiBaseUrl}/vehicles/trade`;
   const headers = {
@@ -258,7 +273,6 @@ async function getTradeVehicles(leadId) {
   }
 }
 
-// Get lead source
 async function getLeadSource(leadSourceId) {
   const url = `${VIN_CONFIG.apiBaseUrl}/leadSources/id/${leadSourceId}`;
   const headers = { "Accept": "application/vnd.coxauto.v1+json" };
@@ -277,7 +291,6 @@ async function getLeadSource(leadSourceId) {
   }
 }
 
-// Get user by ID
 async function getUserById(userId) {
   if (!userId || userId === 0) return null;
   
@@ -302,7 +315,6 @@ async function getUserById(userId) {
   }
 }
 
-// Get contact details with dealer team
 async function getContactDetails(contactUrl) {
   try {
     const urlMatch = contactUrl.match(/contacts\/id\/(\d+)\?dealerid=(\d+)/);
@@ -331,7 +343,6 @@ async function getContactDetails(contactUrl) {
   }
 }
 
-// Process leads in parallel
 async function processLeadsInParallel(leads) {
   const leadPromises = leads.map(async (lead) => {
     const [vehiclesOfInterest, tradeVehicles, leadSource, contactDetails] = await Promise.allSettled([
@@ -360,22 +371,14 @@ async function processLeadsInParallel(leads) {
   return Promise.all(leadPromises);
 }
 
-// Get complete customer data
 async function getCompleteCustomerData(phoneNumber) {
-  console.log("\n🚀 Fetching complete customer data for:", phoneNumber);
-  const startTime = Date.now();
-  
   try {
     const contacts = await getContactsByPhone(phoneNumber);
     
     if (!contacts || contacts.length === 0) {
-      console.log("⚠️ No contacts found");
       return null;
     }
     
-    console.log(`✅ Found ${contacts.length} contact(s)`);
-    
-    // Process each contact
     const allContactsDataPromises = contacts.map(async (contact) => {
       const leads = await getLeads(contact.contactId);
       let allLeadsData = [];
@@ -384,7 +387,6 @@ async function getCompleteCustomerData(phoneNumber) {
       if (leads.length > 0) {
         allLeadsData = await processLeadsInParallel(leads);
         
-        // Find primary sales rep
         for (const leadData of allLeadsData) {
           if (leadData.salesRepInfo) {
             primarySalesRepInfo = leadData.salesRepInfo;
@@ -395,36 +397,75 @@ async function getCompleteCustomerData(phoneNumber) {
       
       const salesAssignment = await getUserById(VIN_CONFIG.userId);
       
+      // Helper function to check if vehicle has complete info (only checking make and model for null)
+      const isVehicleComplete = (vehicle) => {
+        return vehicle.make !== null && vehicle.model !== null && 
+               vehicle.make !== '' && vehicle.model !== '';
+      };
+      
+      // Process each lead's vehicles separately and maintain separation
+      const processedLeadsData = allLeadsData.map(lead => {
+        const vehiclesOfInterest = lead.vehiclesOfInterest || [];
+        const tradeVehicles = lead.tradeVehicles || [];
+        
+        // Separate valid and incomplete vehicles for this lead
+        const validVOI = vehiclesOfInterest.filter(isVehicleComplete);
+        const incompleteVOI = vehiclesOfInterest.filter(v => !isVehicleComplete(v));
+        
+        const validTrade = tradeVehicles.filter(isVehicleComplete);
+        const incompleteTrade = tradeVehicles.filter(v => !isVehicleComplete(v));
+        
+        return {
+          ...lead,
+          vehiclesOfInterest: validVOI,
+          incompleteVehiclesOfInterest: incompleteVOI,
+          tradeVehicles: validTrade,
+          incompleteTradeVehicles: incompleteTrade
+        };
+      });
+      
+      // Collect all vehicles across all leads (for backward compatibility)
+      const allValidVOI = processedLeadsData.flatMap(lead => lead.vehiclesOfInterest || []);
+      const allIncompleteVOI = processedLeadsData.flatMap(lead => lead.incompleteVehiclesOfInterest || []);
+      const allValidTrade = processedLeadsData.flatMap(lead => lead.tradeVehicles || []);
+      const allIncompleteTrade = processedLeadsData.flatMap(lead => lead.incompleteTradeVehicles || []);
+      
+      console.log(`📊 Vehicle separation for contact ${contact.contactId}:`);
+      console.log(`  - Valid vehicles of interest: ${allValidVOI.length}`);
+      console.log(`  - Incomplete vehicles of interest: ${allIncompleteVOI.length}`);
+      console.log(`  - Valid trade vehicles: ${allValidTrade.length}`);
+      console.log(`  - Incomplete trade vehicles: ${allIncompleteTrade.length}`);
+      
       return {
         contact,
         leads,
-        allLeadsData,
-        vehiclesOfInterest: allLeadsData[0]?.vehiclesOfInterest || [],
-        tradeVehicles: allLeadsData[0]?.tradeVehicles || [],
+        allLeadsData: processedLeadsData, // Use processed data with separated vehicles
+        vehiclesOfInterest: allValidVOI,
+        incompleteVehiclesOfInterest: allIncompleteVOI,
+        tradeVehicles: allValidTrade,
+        incompleteTradeVehicles: allIncompleteTrade,
         salesAssignment,
         salesRepInfo: primarySalesRepInfo,
-        leadSource: allLeadsData[0]?.leadSource || null
+        leadSource: processedLeadsData[0]?.leadSource || null
       };
     });
     
     const allContactsData = await Promise.all(allContactsDataPromises);
-    const totalTime = Date.now() - startTime;
-    
-    console.log(`✅ Data retrieval complete in ${totalTime}ms`);
     
     return {
       contact: contacts[0],
       leads: allContactsData[0]?.leads || [],
       allLeadsData: allContactsData[0]?.allLeadsData || [],
       vehiclesOfInterest: allContactsData[0]?.vehiclesOfInterest || [],
+      incompleteVehiclesOfInterest: allContactsData[0]?.incompleteVehiclesOfInterest || [],
       tradeVehicles: allContactsData[0]?.tradeVehicles || [],
+      incompleteTradeVehicles: allContactsData[0]?.incompleteTradeVehicles || [],
       salesAssignment: allContactsData[0]?.salesAssignment,
       salesRepInfo: allContactsData[0]?.salesRepInfo,
       leadSource: allContactsData[0]?.leadSource,
       contacts,
       allContactsData,
-      hasMultipleContacts: contacts.length > 1,
-      retrievalTime: totalTime
+      hasMultipleContacts: contacts.length > 1
     };
   } catch (error) {
     console.error("❌ Error in getCompleteCustomerData:", error.message);
@@ -434,7 +475,6 @@ async function getCompleteCustomerData(phoneNumber) {
 
 // ============= 3CX FUNCTIONS =============
 
-// Login endpoint
 app.post('/api/login', async (req, res) => {
   try {
     const { username, password } = req.body;
@@ -475,7 +515,6 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
-// Get 3CX access token
 async function getAccessToken() {
   try {
     const params = new URLSearchParams();
@@ -507,8 +546,7 @@ async function ensureValidToken() {
   return accessToken;
 }
 
-// Get participant details
-async function getParticipantDetails(entity) {
+async function getParticipantDetails(entity, retryCount = 0) {
   try {
     const token = await ensureValidToken();
     const url = `${PBX_BASE_URL}${entity}`;
@@ -521,18 +559,40 @@ async function getParticipantDetails(entity) {
 
     return response.data;
   } catch (error) {
+    // If 401/403 and haven't retried, refresh token and retry once
+    if ((error.response?.status === 401 || error.response?.status === 403) && retryCount === 0) {
+      console.log('🔄 Token issue, refreshing and retrying...');
+      await getAccessToken();
+      return getParticipantDetails(entity, retryCount + 1);
+    }
     console.error('❌ Error getting participant details:', error.message);
     return null;
   }
 }
 
-// Connect to 3CX WebSocket
+let pbxPingInterval = null;
+
 async function connectTo3CXWebSocket() {
+  // Prevent concurrent connection attempts
+  if (isConnectingToPBX) {
+    console.log('⏳ Already connecting to 3CX...');
+    return;
+  }
+
+  isConnectingToPBX = true;
+
   try {
     const token = await ensureValidToken();
     
     if (pbxWebSocket) {
+      pbxWebSocket.removeAllListeners();
       pbxWebSocket.close();
+      pbxWebSocket = null;
+    }
+
+    if (pbxPingInterval) {
+      clearInterval(pbxPingInterval);
+      pbxPingInterval = null;
     }
 
     console.log('🔌 Connecting to 3CX WebSocket...');
@@ -546,91 +606,189 @@ async function connectTo3CXWebSocket() {
 
     pbxWebSocket.on('open', () => {
       console.log('✅ Connected to 3CX WebSocket');
+      pbxReconnectAttempts = 0;
+      isConnectingToPBX = false;
+
+      // Start ping interval to keep connection alive
+      pbxPingInterval = setInterval(() => {
+        if (pbxWebSocket && pbxWebSocket.readyState === WebSocket.OPEN) {
+          pbxWebSocket.ping();
+        }
+      }, PBX_PING_INTERVAL);
+    });
+
+    pbxWebSocket.on('pong', () => {
+      // Connection is alive
     });
 
     pbxWebSocket.on('message', async (data) => {
-      try {
-        const message = JSON.parse(data.toString());
+  try {
+    const message = JSON.parse(data.toString());
 
-        if (message.sequence && message.event && message.event.entity) {
-          if (message.sequence > latestSequence) {
-            latestSequence = message.sequence;
+    if (message.sequence && message.event && message.event.entity) {
+      if (message.sequence > latestSequence) {
+        latestSequence = message.sequence;
 
-            const entity = message.event.entity;
-            const entityParts = entity.split('/');
+        const entity = message.event.entity;
+        const entityParts = entity.split('/');
+        
+        if (entityParts.length >= 3 && entityParts[1] === 'callcontrol') {
+          const userExtension = entityParts[2];
+          
+          // Create unique call identifier
+          const callKey = `${userExtension}-${message.sequence}-${Date.now()}`;
+          
+          // Check if we've recently processed this call
+          if (processedCalls.has(callKey)) {
+            return; // Skip duplicate
+          }
+          
+          processedCalls.set(callKey, Date.now());
+          
+          console.log(`\n🔔 CALL for extension ${userExtension}`);
+          
+          const participantDetails = await getParticipantDetails(entity);
+          
+          if (participantDetails) {
+            const callerNumber = participantDetails.party_caller_id;
+            console.log(`📞 Original Caller from 3CX: ${callerNumber}`);
             
-            if (entityParts.length >= 3 && entityParts[1] === 'callcontrol') {
-              const userExtension = entityParts[2];
-              console.log(`\n🔔 CALL DETECTED for extension ${userExtension}`);
-              
-              const participantDetails = await getParticipantDetails(entity);
-              
-              if (participantDetails) {
-                const callerNumber = participantDetails.party_caller_id;
-                console.log(`📞 Caller Number: ${callerNumber}`);
-                
-                // Fetch VinSolutions data
-                const vinPhoneNumber = extractPhoneDigits(callerNumber);
-                console.log(`🔍 Searching VinSolutions for: ${vinPhoneNumber}`);
-                
-                const customerData = await getCompleteCustomerData(vinPhoneNumber);
-                
-                const notification = {
-                  type: 'call_notification',
-                  data: {
-                    callerName: participantDetails.party_caller_name,
-                    callerNumber: participantDetails.party_caller_id,
-                    extension: participantDetails.dn,
-                    status: participantDetails.status,
-                    partyDnType: participantDetails.party_dn_type,
-                    callId: participantDetails.callid,
-                    timestamp: new Date().toISOString(),
-                    userExtension: userExtension,
-                    // VinSolutions data
-                    customerData: customerData
-                  }
-                };
-
-                broadcastToUser(userExtension, notification);
-              }
+            // TESTING MODE TOGGLE
+            let vinPhoneNumber;
+            if (PRODUCTION_MODE) {
+              // Production: Use actual caller number from 3CX
+              vinPhoneNumber = extractPhoneDigits(callerNumber);
+              console.log(`✅ PRODUCTION MODE: Using actual number: ${vinPhoneNumber}`);
+            } else {
+              // Testing: Use hardcoded test number
+              vinPhoneNumber = TEST_PHONE_NUMBER;
+              console.log(`🧪 TESTING MODE: Using hardcoded number: ${vinPhoneNumber}`);
             }
+            
+            const customerData = await getCompleteCustomerData(vinPhoneNumber);
+            
+            const notification = {
+              type: 'call_notification',
+              data: {
+                callerName: participantDetails.party_caller_name,
+                callerNumber: participantDetails.party_caller_id,
+                extension: participantDetails.dn,
+                status: participantDetails.status,
+                partyDnType: participantDetails.party_dn_type,
+                callId: participantDetails.callid,
+                timestamp: new Date().toISOString(),
+                userExtension: userExtension,
+                customerData: customerData
+              }
+            };
+
+            broadcastToUser(userExtension, notification);
           }
         }
-      } catch (error) {
-        console.error('❌ Error processing WebSocket message:', error.message);
       }
-    });
+    }
+  } catch (error) {
+    console.error('❌ Error processing message:', error.message);
+  }
+});
 
     pbxWebSocket.on('error', (error) => {
       console.error('❌ 3CX WebSocket error:', error.message);
+      isConnectingToPBX = false;
     });
 
-    pbxWebSocket.on('close', () => {
-      console.log('❌ 3CX WebSocket closed. Reconnecting...');
-      setTimeout(connectTo3CXWebSocket, 5000);
+    pbxWebSocket.on('close', (code, reason) => {
+      console.log(`❌ 3CX WebSocket closed (${code}: ${reason}). Reconnecting...`);
+      isConnectingToPBX = false;
+      
+      if (pbxPingInterval) {
+        clearInterval(pbxPingInterval);
+        pbxPingInterval = null;
+      }
+
+      // Exponential backoff for reconnection
+      const delay = Math.min(5000 * Math.pow(1.5, pbxReconnectAttempts), 30000);
+      pbxReconnectAttempts++;
+      
+      setTimeout(() => {
+        connectTo3CXWebSocket();
+      }, delay);
     });
 
   } catch (error) {
     console.error('❌ Error connecting to 3CX:', error.message);
+    isConnectingToPBX = false;
     setTimeout(connectTo3CXWebSocket, 5000);
   }
 }
 
 function broadcastToUser(username, message) {
   let sentCount = 0;
+  const deadClients = [];
+  
   connectedClients.forEach((clientInfo, client) => {
-    if (clientInfo.username === username && client.readyState === WebSocket.OPEN) {
-      client.send(JSON.stringify(message));
-      sentCount++;
+    if (clientInfo.username === username) {
+      if (client.readyState === WebSocket.OPEN) {
+        try {
+          client.send(JSON.stringify(message));
+          sentCount++;
+        } catch (error) {
+          console.error(`❌ Error sending to client ${username}:`, error.message);
+          deadClients.push(client);
+        }
+      } else {
+        deadClients.push(client);
+      }
     }
   });
-  console.log(`✅ Notification sent to ${sentCount} client(s) for user ${username}`);
+  
+  // Clean up dead clients
+  deadClients.forEach(client => connectedClients.delete(client));
+  
+  console.log(`✅ Sent to ${sentCount} client(s) for ${username}`);
+  
+  if (sentCount === 0) {
+    console.warn(`⚠️ No active clients for user ${username}`);
+  }
 }
 
-// WebSocket handler
+// ============= WEBSOCKET WITH HEARTBEAT =============
+
+function heartbeat() {
+  this.isAlive = true;
+}
+
+const heartbeatInterval = setInterval(() => {
+  wss.clients.forEach((ws) => {
+    if (ws.isAlive === false) {
+      const clientInfo = connectedClients.get(ws);
+      console.log(`💀 Terminating dead connection for ${clientInfo?.username || 'unknown'}`);
+      connectedClients.delete(ws);
+      return ws.terminate();
+    }
+    
+    ws.isAlive = false;
+    ws.ping();
+  });
+}, HEARTBEAT_INTERVAL);
+
 wss.on('connection', (ws) => {
   console.log('🔌 Client connected');
-  connectedClients.set(ws, { authenticated: false, username: null });
+  
+  ws.isAlive = true;
+  ws.on('pong', heartbeat);
+  
+  connectedClients.set(ws, { 
+    authenticated: false, 
+    username: null, 
+    connectedAt: Date.now() 
+  });
+
+  ws.send(JSON.stringify({ 
+    type: 'connected', 
+    message: 'Connected to call notification service',
+    serverTime: new Date().toISOString()
+  }));
 
   ws.on('message', (data) => {
     try {
@@ -638,13 +796,23 @@ wss.on('connection', (ws) => {
       
       if (message.type === 'authenticate') {
         const username = message.username;
-        connectedClients.set(ws, { authenticated: true, username: username });
+        connectedClients.set(ws, { 
+          authenticated: true, 
+          username: username,
+          connectedAt: Date.now()
+        });
         console.log(`✅ User ${username} authenticated`);
         
         ws.send(JSON.stringify({ 
           type: 'authenticated', 
           message: 'Authentication successful',
-          username: username
+          username: username,
+          serverTime: new Date().toISOString()
+        }));
+      } else if (message.type === 'ping') {
+        ws.send(JSON.stringify({ 
+          type: 'pong',
+          serverTime: new Date().toISOString()
         }));
       }
     } catch (error) {
@@ -662,25 +830,39 @@ wss.on('connection', (ws) => {
     console.error('❌ Client WebSocket error:', error.message);
     connectedClients.delete(ws);
   });
-
-  ws.send(JSON.stringify({ 
-    type: 'connected', 
-    message: 'Connected to call notification service'
-  }));
 });
 
-// Health check
+wss.on('close', () => {
+  clearInterval(heartbeatInterval);
+  if (pbxPingInterval) clearInterval(pbxPingInterval);
+});
+
 app.get('/health', (req, res) => {
+  const clientStats = Array.from(connectedClients.values()).reduce((acc, client) => {
+    if (client.authenticated) {
+      acc.authenticated++;
+      if (!acc.users[client.username]) {
+        acc.users[client.username] = 0;
+      }
+      acc.users[client.username]++;
+    } else {
+      acc.unauthenticated++;
+    }
+    return acc;
+  }, { authenticated: 0, unauthenticated: 0, users: {} });
+
   res.json({ 
     status: 'ok', 
     pbxConnected: pbxWebSocket && pbxWebSocket.readyState === WebSocket.OPEN,
     connectedClients: connectedClients.size,
+    clientStats: clientStats,
     latestSequence: latestSequence,
-    tokenValid: accessToken && Date.now() < tokenExpiryTime
+    tokenValid: accessToken && Date.now() < tokenExpiryTime,
+    uptime: process.uptime(),
+    pbxReconnectAttempts: pbxReconnectAttempts
   });
 });
 
-// Start server
 const PORT = process.env.PORT || 7080;
 
 server.listen(PORT, '0.0.0.0', async () => {
@@ -688,16 +870,34 @@ server.listen(PORT, '0.0.0.0', async () => {
   console.log(`🚀 3CX + VinSolutions Integration Server`);
   console.log(`${'='.repeat(60)}`);
   console.log(`Server running on port ${PORT}`);
+  
+  // Show current mode
+  if (PRODUCTION_MODE) {
+    console.log(`✅ MODE: PRODUCTION (using real phone numbers)`);
+  } else {
+    console.log(`🧪 MODE: TESTING (using test number: ${TEST_PHONE_NUMBER})`);
+  }
+  
   console.log(`${'='.repeat(60)}\n`);
   
   try {
     await getAccessToken();
-    await getVinToken(); // Initialize VinSolutions token
+    await getVinToken();
     await connectTo3CXWebSocket();
     console.log('✅ All services initialized\n');
   } catch (error) {
     console.error('❌ Failed to initialize:', error.message);
   }
+});
+
+process.on('SIGTERM', () => {
+  console.log('SIGTERM received, closing server...');
+  clearInterval(heartbeatInterval);
+  if (pbxPingInterval) clearInterval(pbxPingInterval);
+  server.close(() => {
+    console.log('Server closed');
+    process.exit(0);
+  });
 });
 
 module.exports = { app, server };

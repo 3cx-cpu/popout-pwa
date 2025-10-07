@@ -8,8 +8,8 @@ const RoleTabs = ({ activeRole, onRoleChange }) => {
     { id: 'serviceAdvisor', label: 'Service Advisor' },
     { id: 'salesManager', label: 'Sales Manager' },
     { id: 'partsRep', label: 'Parts Rep' },
-    { id: 'collisionManager', label: 'Collision Manager' },
-    { id: 'multiMatch', label: 'Multi-Match' },
+    // { id: 'collisionManager', label: 'Collision Manager' },
+    // { id: 'multiMatch', label: 'Multi-Match' },
     { id: 'household', label: 'Household' }
   ];
 

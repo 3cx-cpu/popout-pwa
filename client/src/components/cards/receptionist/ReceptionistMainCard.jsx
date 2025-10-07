@@ -1,6 +1,5 @@
-// Update src/components/cards/receptionist/ReceptionistMainCard.jsx
 import React from 'react';
-import { User, Car, RefreshCw, Activity, Users, Phone,Mail } from 'lucide-react';
+import { User, Car, RefreshCw, Activity, Users, Phone, Mail } from 'lucide-react';
 
 const ReceptionistMainCard = ({ loading, customerData, from, vehicleData, allLeads, selectedLeadIndex, handleLeadClick }) => {
   const contact = customerData?.contact || {};
@@ -34,11 +33,11 @@ const ReceptionistMainCard = ({ loading, customerData, from, vehicleData, allLea
     const status = leadStatus?.toLowerCase();
     
     if (status === 'active' || status === 'hot' || status === 'warm' || status === 'new') {
-      return 'Active Lead';
+      return 'Leads';
     }
     
     if (status === 'bad' || status === 'dead' || status === 'lost' || status === 'inactive' || status === 'closed') {
-      return 'Bad Lead';
+      return 'Leads';
     }
     
     return 'Lead';
@@ -82,13 +81,13 @@ const ReceptionistMainCard = ({ loading, customerData, from, vehicleData, allLea
               <div className="flex justify-between items-center">
                 <span className="text-sm text-black font-bold">Email:</span>
                 <span className="text-sm font-semibold text-gray-900">
-                  {contact?.email }
+                  {contact?.email}
                 </span>
               </div>
               <div className="flex justify-between items-center">
                 <span className="text-sm text-black font-bold">Address:</span>
                 <span className="text-sm font-semibold text-gray-900">
-                   <div>
+                  <div>
                 <div className="text-base font-medium text-gray-900">
                   {contact?.StreetAddress || 'N/A'}
                 </div>
@@ -99,7 +98,7 @@ const ReceptionistMainCard = ({ loading, customerData, from, vehicleData, allLea
               <div className="flex justify-between items-center">
                 <span className="text-sm text-black font-bold">Lead Source:</span>
                 <span className="text-sm font-semibold text-[#5B79B8]">
-                  {customerData?.leadSource?.leadSourceName}
+                  {allLeads[selectedLeadIndex]?.leadSource?.leadSourceName || customerData?.leadSource?.leadSourceName || 'Unknown'}
                 </span>
               </div>
             </div>
@@ -133,19 +132,29 @@ const ReceptionistMainCard = ({ loading, customerData, from, vehicleData, allLea
               <div className="flex justify-between items-center">
                 <span className="text-sm text-black font-bold">Trim Level:</span>
                 <span className="text-sm font-semibold text-gray-900">
-                  {vehicleData.desiredVehicle.trim || 'N/A'}
+                  {(vehicleData.desiredVehicle.trim && vehicleData.desiredVehicle.trim !== "null" && vehicleData.desiredVehicle.trim.trim() !== "") 
+                    ? vehicleData.desiredVehicle.trim 
+                    : vehicleData.desiredVehicle.trimName || 'N/A'}
                 </span>
               </div>
               <div className="flex justify-between items-center">
                 <span className="text-sm text-black font-bold">Color Preference:</span>
                 <span className="text-sm font-semibold text-gray-900">
-                  {vehicleData.desiredVehicle.colorPreference || 'N/A'}
+                  {(vehicleData.desiredVehicle.exteriorColor && vehicleData.desiredVehicle.exteriorColor !== "null" && vehicleData.desiredVehicle.exteriorColor.trim() !== "") 
+                    ? vehicleData.desiredVehicle.exteriorColor 
+                    : vehicleData.desiredVehicle.externalColorName || 'N/A'}
                 </span>
               </div>
               <div className="flex justify-between items-center">
                 <span className="text-sm text-black font-bold">Retail Price:</span>
                 <span className="text-sm font-semibold text-gray-900">
-                  ${(vehicleData.desiredVehicle.sellingPrice || vehicleData.desiredVehicle.msrp || 0).toLocaleString()}
+                  {vehicleData.desiredVehicle.sellingPrice 
+                    ? `$${vehicleData.desiredVehicle.sellingPrice.toLocaleString()}`
+                    : vehicleData.desiredVehicle.price 
+                      ? `$${vehicleData.desiredVehicle.price.toLocaleString()}`
+                      : vehicleData.desiredVehicle.msrp
+                        ? `$${vehicleData.desiredVehicle.msrp.toLocaleString()}`
+                        : 'N/A'}
                 </span>
               </div>
             </div>
@@ -189,7 +198,7 @@ const ReceptionistMainCard = ({ loading, customerData, from, vehicleData, allLea
               <div className="flex justify-between items-center">
                 <span className="text-sm text-black font-bold">Mileage:</span>
                 <span className="text-sm font-semibold text-gray-900">
-                  {(vehicleData.tradeVehicle.mileage || 0).toLocaleString()} miles
+                  {vehicleData.tradeVehicle.mileage ? `${vehicleData.tradeVehicle.mileage.toLocaleString()} miles` : 'N/A'}
                 </span>
               </div>
             </div>
@@ -275,129 +284,96 @@ const ReceptionistMainCard = ({ loading, customerData, from, vehicleData, allLea
         
         {/* Sales Assignment Card */}
         <div className="bg-white rounded-lg border border-gray-200 p-5">
-  <div className="flex items-center gap-2 mb-4">
-    <Users className="w-6 h-6 text-yellow-500" />
-    <h2 className="text-base font-bold text-blue-900">Sales Assignment</h2>
-  </div>
-
-  {salesAgent ? (
-    <div>
-      <div className="flex items-center gap-3 mb-4" style={{ backgroundColor: '#f9fafb', padding: '12px', borderRadius: '8px' }}>
-        <div className="w-12 h-12 rounded-full overflow-hidden bg-gradient-to-br from-purple-400 to-pink-400 flex items-center justify-center">
-          <div className="text-white font-bold text-lg">
-            {salesAgent.firstName?.[0]}{salesAgent.lastName?.[0]}
+          <div className="flex items-center gap-2 mb-4">
+            <Users className="w-6 h-6 text-yellow-500" />
+            <h2 className="text-base font-bold text-blue-900">Sales Assignment</h2>
           </div>
-        </div>
-        <div className="flex-1">
-          <div className="font-bold text-gray-900">{salesAgent.fullName}</div>
-          <div className="text-sm text-gray-600">
-            {salesAgent.userTypes?.join(', ') || 'Sales Representative'}
-          </div>
-          <div className="flex items-center gap-2 mt-1">
-            <span className="bg-green-100 text-green-700 text-sm px-2 py-0.5 rounded">Available</span>
-            <span className="text-sm text-gray-600">Ext: N/A</span>
-          </div>
-        </div>
-        <button 
-          className="text-white text-sm font-medium py-2 px-4 rounded-md flex items-center gap-2 transition-colors"
-          style={{ backgroundColor: '#2b4f7d' }}
-          onMouseEnter={(e) => e.target.style.backgroundColor = '#1e3a5f'}
-          onMouseLeave={(e) => e.target.style.backgroundColor = '#2b4f7d'}
-        >
-          <Phone className="w-4 h-4" />
-          Transfer
-        </button>
-      </div>
 
-      {/* Add email if available */}
-      {salesAgent.emailAddress && (
-        <div className="mb-3 px-3">
-          <div className="flex items-center gap-2 text-sm">
-            <Mail className="w-4 h-4 text-gray-500" />
-            <a href={`mailto:${salesAgent.emailAddress}`} className="text-blue-600 hover:underline">
-              {salesAgent.emailAddress}
-            </a>
-          </div>
-        </div>
-      )}
+          {salesAgent ? (
+            <div>
+              <div className="flex items-center gap-3 mb-4" style={{ backgroundColor: '#f9fafb', padding: '12px', borderRadius: '8px' }}>
+                <div className="w-12 h-12 rounded-full overflow-hidden bg-gradient-to-br from-purple-400 to-pink-400 flex items-center justify-center">
+                  <div className="text-white font-bold text-lg">
+                    {salesAgent.firstName?.[0]}{salesAgent.lastName?.[0]}
+                  </div>
+                </div>
+                <div className="flex-1">
+                  <div className="font-bold text-gray-900">{salesAgent.fullName}</div>
+                  <div className="text-sm text-gray-600">
+                    {salesAgent.userTypes?.join(', ') || 'Sales Representative'}
+                  </div>
+                  {/* <div className="flex items-center gap-2 mt-1">
+                    <span className="bg-green-100 text-green-700 text-sm px-2 py-0.5 rounded">Available</span>
+                    <span className="text-sm text-gray-600">Ext: N/A</span>
+                  </div> */}
+                </div>
+                {/* <button 
+                  className="text-white text-sm font-medium py-2 px-4 rounded-md flex items-center gap-2 transition-colors"
+                  style={{ backgroundColor: '#2b4f7d' }}
+                  onMouseEnter={(e) => e.target.style.backgroundColor = '#1e3a5f'}
+                  onMouseLeave={(e) => e.target.style.backgroundColor = '#2b4f7d'}
+                >
+                  <Phone className="w-4 h-4" />
+                  Transfer
+                </button> */}
+              </div>
 
-      <div className="space-y-3 pt-3 border-t border-gray-200">
+              {/* Add email if available */}
+              {salesAgent.emailAddress && (
+                <div className="mb-3 px-3">
+                  <div className="flex items-center gap-2 text-sm">
+                    <Mail className="w-4 h-4 text-gray-500" />
+                    <a href={`mailto:${salesAgent.emailAddress}`} className="text-blue-600 hover:underline">
+                      {salesAgent.emailAddress}
+                    </a>
+                  </div>
+                </div>
+              )}
 
-        {/* <div className="flex justify-between items-start">
-          <div className="text-medium font-semibold text-black-600 min-w-[140px]">Last Contact:</div>
-          <div className="text-right" style={{ color: '#284c7b' }}>March 18, 2024</div>
-        </div>
-        <div className="flex justify-between items-start">
-          <div className="text-medium font-semibold text-black-600 min-w-[140px]">Contact Method:</div>
-          <div className="text-gray-900 text-right">Email Follow-up</div>
-        </div>
-        <div className="flex justify-between items-start">
-          <div className="text-medium font-semibold text-black-600 min-w-[140px]">Next Follow-up:</div>
-          <div className="text-gray-900 text-right text-yellow-600 font-medium">Today</div>
-        </div> */}
-        {/* Lead Priority with conditional styling */}
-        <div className="flex justify-between items-start">
-          <div className="text-medium font-semibold text-black-600 min-w-[140px]">Lead Priority:</div>
-          <div className="text-gray-900 text-right">
-            {allLeads[selectedLeadIndex]?.isHot ? (
-              <span className="bg-red-500 text-white px-3 py-1 rounded text-sm font-semibold">Hot</span>
-            ) : (
-              <span className="bg-gray-300 text-gray-600 px-3 py-1 rounded text-sm font-semibold line-through">Hot</span>
-            )}
-          </div>
-        </div>
+              <div className="space-y-3 pt-3 border-t border-gray-200">
+                {/* Lead Priority with conditional styling */}
+                <div className="flex justify-between items-start">
+                  <div className="text-medium font-semibold text-black-600 min-w-[140px]">Lead Priority:</div>
+                  <div className="text-gray-900 text-right">
+                    {allLeads[selectedLeadIndex]?.isHot ? (
+                      <span className="bg-red-500 text-white px-3 py-1 rounded text-sm font-semibold">Hot</span>
+                    ) : (
+                      <span className="bg-gray-300 text-gray-600 px-3 py-1 rounded text-sm font-semibold line-through">Hot</span>
+                    )}
+                  </div>
+                </div>
 
-        {/* Lead Source */}
-        <div className="flex justify-between items-start">
-          <div className="text-medium font-semibold text-black-600 min-w-[140px]">Lead Source:</div>
-          <div className="text-gray-900 text-right">
-            {allLeads[selectedLeadIndex]?.leadSource?.leadSourceName || 'Unknown'}
-          </div>
-        </div>
+                {/* Lead Source */}
+                <div className="flex justify-between items-start">
+                  <div className="text-medium font-semibold text-black-600 min-w-[140px]">Lead Source:</div>
+                  <div className="text-gray-900 text-right">
+                    {allLeads[selectedLeadIndex]?.leadSource?.leadSourceName || 'Unknown'}
+                  </div>
+                </div>
 
-
-            {/* Time Created */}
-        <div className="flex justify-between items-start">
-  <div className="text-medium font-semibold text-black-600 min-w-[140px]">Created On:</div>
-  <div className="text-gray-900 text-right">
-    {allLeads[selectedLeadIndex]?.createdUtc 
-      ? new Date(allLeads[selectedLeadIndex].createdUtc).toLocaleString('en-US', {
-          day: '2-digit',
-          month: 'short',
-          year: 'numeric',
-          hour: 'numeric',
-          minute: '2-digit',
-          hour12: true,
-          timeZone: 'UTC'
-        }) + ' UTC'
-      : 'Unknown'}
-  </div>
-</div>
-        {/* Desired Vehicle Summary */}
-        {/* {vehicleData?.desiredVehicle && (
-          <div className="flex justify-between items-start">
-            <div className="text-medium font-semibold text-black-600 min-w-[140px]">Desired Vehicle:</div>
-            <div className="text-gray-900 text-right">
-              {vehicleData.desiredVehicle.year} {vehicleData.desiredVehicle.make} {vehicleData.desiredVehicle.model}
+                {/* Time Created */}
+                <div className="flex justify-between items-start">
+                  <div className="text-medium font-semibold text-black-600 min-w-[140px]">Created On:</div>
+                  <div className="text-gray-900 text-right">
+                    {allLeads[selectedLeadIndex]?.createdUtc 
+                      ? new Date(allLeads[selectedLeadIndex].createdUtc).toLocaleString('en-US', {
+                          day: '2-digit',
+                          month: 'short',
+                          year: 'numeric',
+                          hour: 'numeric',
+                          minute: '2-digit',
+                          hour12: true,
+                          timeZone: 'UTC'
+                        }) + ' UTC'
+                      : 'Unknown'}
+                  </div>
+                </div>
+              </div>
             </div>
-          </div>
-        )} */}
-
-        {/* Current Vehicle Summary */}
-        {/* {vehicleData?.tradeVehicle && (
-          <div className="flex justify-between items-start">
-            <div className="text-medium font-semibold text-black-600 min-w-[140px]">Current Vehicle:</div>
-            <div className="text-gray-900 text-right">
-              {vehicleData.tradeVehicle.year} {vehicleData.tradeVehicle.make} {vehicleData.tradeVehicle.model}
-            </div>
-          </div>
-        )} */}
-      </div>
-    </div>
-  ) : (
-    <div className="text-center text-gray-500 py-8">No agent assigned</div>
-  )}
-</div>
+          ) : (
+            <div className="text-center text-gray-500 py-8">No agent assigned</div>
+          )}
+        </div>
       </div>
     </div>
   );

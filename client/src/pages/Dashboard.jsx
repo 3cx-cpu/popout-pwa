@@ -32,7 +32,7 @@ const Dashboard = ({ customerDataProp, fromProp, onClose }) => {
     return params.get('from') || '';
   };
 
-  const [activeRole, setActiveRole] = useState('productSpecialist');
+  const [activeRole, setActiveRole] = useState('receptionist');
   const [customerData] = useState(getInitialData());
   const [from] = useState(getInitialFrom());
   const [loading] = useState(false);
