@@ -3,6 +3,9 @@ import { User, Car, RefreshCw, Activity, Users, Phone, Mail } from 'lucide-react
 
 const ReceptionistMainCard = ({ loading, customerData, from, vehicleData, allLeads, selectedLeadIndex, handleLeadClick, loadingStage = 4 }) => {
   
+  // Add state for tracking which vehicle to display
+const [selectedVehicleOfInterestIndex, setSelectedVehicleOfInterestIndex] = React.useState(0);
+const [selectedTradeVehicleIndex, setSelectedTradeVehicleIndex] = React.useState(0);
   // Add debug logging
   console.log('🎴 ReceptionistMainCard render:', {
     loading,
@@ -14,6 +17,7 @@ const ReceptionistMainCard = ({ loading, customerData, from, vehicleData, allLea
 
   const contact = customerData?.contact || {};
   const salesAgent = customerData?.salesRepInfo || null;
+  
 
   // Show loading skeleton only for Stage 1 (no contact data yet)
   const showLoadingSkeleton = loadingStage < 2 || !contact.fullName;

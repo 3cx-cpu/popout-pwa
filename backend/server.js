@@ -19,7 +19,7 @@ const LOGIN_URL = 'https://pbx.bozarthconnect.com/webclient/api/Login/GetAccessT
 
 // ============= TESTING CONFIGURATION =============
 const PRODUCTION_MODE = true;
-const TEST_PHONE_NUMBER = '6022909586';
+const TEST_PHONE_NUMBER = '3037517500';
 // ================================================
 
 // ============= CACHE CONFIGURATION =============
@@ -798,88 +798,110 @@ async function connectTo3CXWebSocket() {
             
             if (entityParts.length >= 3 && entityParts[1] === 'callcontrol') {
               const userExtension = entityParts[2];
-              const callKey = `${userExtension}-${message.sequence}-${Date.now()}`;
               
-              if (processedCalls.has(callKey)) {
-                return;
+              // CHECK FOR CALL END (event_type: 1)
+              if (message.event.event_type === 1) {
+                console.log(`\n${'='.repeat(70)}`);
+                console.log(`📞 CALL ENDED - Extension: ${userExtension}`);
+                console.log(`⏰ Timestamp: ${new Date().toISOString()}`);
+                console.log(`${'='.repeat(70)}\n`);
+                
+                // Send call end notification
+                broadcastToUser(userExtension, {
+                  type: 'call_ended',
+                  timestamp: new Date().toISOString(),
+                  userExtension: userExtension,
+                  entity: entity
+                });
+                
+                return; // Don't process further
               }
               
-              processedCalls.set(callKey, Date.now());
-              
-              const callReceiveTime = Date.now();
-              console.log(`\n${'='.repeat(70)}`);
-              console.log(`📞 INCOMING CALL DETECTED`);
-              console.log(`${'='.repeat(70)}`);
-              console.log(`👤 Extension: ${userExtension}`);
-              console.log(`⏰ Timestamp: ${new Date().toISOString()}`);
-              
-              const participantDetails = await getParticipantDetails(entity);
-              
-              if (participantDetails) {
-                const pbxFetchTime = Date.now();
-                const pbxDuration = ((pbxFetchTime - callReceiveTime) / 1000).toFixed(3);
+              // CHECK FOR RINGING (event_type: 0)
+              if (message.event.event_type === 0) {
+                const callKey = `${userExtension}-${message.sequence}-${Date.now()}`;
                 
-                const callerNumber = participantDetails.party_caller_id;
-                
-                console.log(`\n📋 3CX CALL DETAILS RECEIVED (${pbxDuration}s):`);
-                console.log(`   Caller Name: ${participantDetails.party_caller_name}`);
-                console.log(`   Caller Number: ${callerNumber}`);
-                console.log(`   Status: ${participantDetails.status}`);
-                console.log(`   Call ID: ${participantDetails.callid}`);
-                
-                let vinPhoneNumber;
-                if (PRODUCTION_MODE) {
-                  vinPhoneNumber = extractPhoneDigits(callerNumber);
-                  console.log(`✅ PRODUCTION MODE: Using actual number: ${vinPhoneNumber}`);
-                } else {
-                  vinPhoneNumber = TEST_PHONE_NUMBER;
-                  console.log(`🧪 TESTING MODE: Using test number: ${vinPhoneNumber}`);
+                if (processedCalls.has(callKey)) {
+                  return;
                 }
                 
-                const callInfo = {
-                  callerName: participantDetails.party_caller_name,
-                  callerNumber: participantDetails.party_caller_id,
-                  extension: participantDetails.dn,
-                  status: participantDetails.status,
-                  partyDnType: participantDetails.party_dn_type,
-                  callId: participantDetails.callid,
-                  timestamp: new Date().toISOString(),
-                  userExtension: userExtension
-                };
+                processedCalls.set(callKey, Date.now());
                 
-                // STAGE 1: Send immediate notification with phone number only
-                console.log(`\n📤 STAGE 1: Sending immediate phone number...`);
-                sendProgressiveUpdate(userExtension, 1, {
-                  phoneNumber: vinPhoneNumber
-                }, callInfo);
+                const callReceiveTime = Date.now();
+                console.log(`\n${'='.repeat(70)}`);
+                console.log(`📞 INCOMING CALL DETECTED`);
+                console.log(`${'='.repeat(70)}`);
+                console.log(`👤 Extension: ${userExtension}`);
+                console.log(`⏰ Timestamp: ${new Date().toISOString()}`);
                 
-                // Check cache first
-                const cachedData = getCachedCustomerData(vinPhoneNumber);
+                const participantDetails = await getParticipantDetails(entity);
                 
-                if (cachedData) {
-                  // Send cached data immediately as complete
-                  console.log(`🎯 Using cached data - sending as complete`);
-                  sendProgressiveUpdate(userExtension, 4, cachedData, callInfo);
+                if (participantDetails) {
+                  const pbxFetchTime = Date.now();
+                  const pbxDuration = ((pbxFetchTime - callReceiveTime) / 1000).toFixed(3);
                   
-                  // ALSO send in legacy format for backward compatibility
-                  const legacyNotification = {
-                    type: 'call_notification',
-                    data: {
-                      ...callInfo,
-                      customerData: cachedData
-                    }
+                  const callerNumber = participantDetails.party_caller_id;
+                  
+                  console.log(`\n📋 3CX CALL DETAILS RECEIVED (${pbxDuration}s):`);
+                  console.log(`   Caller Name: ${participantDetails.party_caller_name}`);
+                  console.log(`   Caller Number: ${callerNumber}`);
+                  console.log(`   Status: ${participantDetails.status}`);
+                  console.log(`   Call ID: ${participantDetails.callid}`);
+                  
+                  let vinPhoneNumber;
+                  if (PRODUCTION_MODE) {
+                    vinPhoneNumber = extractPhoneDigits(callerNumber);
+                    console.log(`✅ PRODUCTION MODE: Using actual number: ${vinPhoneNumber}`);
+                  } else {
+                    vinPhoneNumber = TEST_PHONE_NUMBER;
+                    console.log(`🧪 TESTING MODE: Using test number: ${vinPhoneNumber}`);
+                  }
+                  
+                  const callInfo = {
+                    callerName: participantDetails.party_caller_name,
+                    callerNumber: participantDetails.party_caller_id,
+                    extension: participantDetails.dn,
+                    status: participantDetails.status,
+                    partyDnType: participantDetails.party_dn_type,
+                    callId: participantDetails.callid,
+                    timestamp: new Date().toISOString(),
+                    userExtension: userExtension
                   };
-                  broadcastToUser(userExtension, legacyNotification);
-                  console.log(`📤 Legacy format sent to ${userExtension}`);
-                } else {
-                  // Start progressive fetch
-                  console.log(`🔄 Starting progressive data fetch...`);
-                  await fetchCustomerDataProgressive(vinPhoneNumber, userExtension, callInfo);
+                  
+                  // STAGE 1: Send immediate notification with phone number only
+                  console.log(`\n📤 STAGE 1: Sending immediate phone number...`);
+                  sendProgressiveUpdate(userExtension, 1, {
+                    phoneNumber: vinPhoneNumber
+                  }, callInfo);
+                  
+                  // Check cache first
+                  const cachedData = getCachedCustomerData(vinPhoneNumber);
+                  
+                  if (cachedData) {
+                    // Send cached data immediately as complete
+                    console.log(`🎯 Using cached data - sending as complete`);
+                    sendProgressiveUpdate(userExtension, 4, cachedData, callInfo);
+                    
+                    // ALSO send in legacy format for backward compatibility
+                    const legacyNotification = {
+                      type: 'call_notification',
+                      data: {
+                        ...callInfo,
+                        customerData: cachedData
+                      }
+                    };
+                    broadcastToUser(userExtension, legacyNotification);
+                    console.log(`📤 Legacy format sent to ${userExtension}`);
+                  } else {
+                    // Start progressive fetch
+                    console.log(`🔄 Starting progressive data fetch...`);
+                    await fetchCustomerDataProgressive(vinPhoneNumber, userExtension, callInfo);
+                  }
+                  
+                  const totalCallHandlingTime = ((Date.now() - callReceiveTime) / 1000).toFixed(2);
+                  console.log(`\n⏱️ Total call handling time: ${totalCallHandlingTime}s`);
+                  console.log(`${'='.repeat(70)}\n`);
                 }
-                
-                const totalCallHandlingTime = ((Date.now() - callReceiveTime) / 1000).toFixed(2);
-                console.log(`\n⏱️ Total call handling time: ${totalCallHandlingTime}s`);
-                console.log(`${'='.repeat(70)}\n`);
               }
             }
           }

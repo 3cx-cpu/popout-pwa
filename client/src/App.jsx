@@ -23,6 +23,7 @@ function App() {
   const [callInfo, setCallInfo] = useState(null);
   const [reconnectAttempts, setReconnectAttempts] = useState(0);
   const [loadingStage, setLoadingStage] = useState(0);
+  const [isCallActive, setIsCallActive] = useState(false);
   
   const wsRef = useRef(null);
   const audioRef = useRef(null);
@@ -173,15 +174,33 @@ function App() {
             return;
           }
           
+          // Handle call end
+          if (message.type === 'call_ended') {
+            console.log('📞 Call ended notification received');
+            setIsCallActive(false);
+            
+            // Optionally auto-close after a delay
+            setTimeout(() => {
+              if (!showCustomerPopup) return; // Don't close if already closed
+              setShowCustomerPopup(false);
+              setCustomerData(null);
+              setCallInfo(null);
+              setLoadingStage(0);
+            }, 5000); // Close after 5 seconds
+            return;
+          }
+          
           // Handle progressive updates
           if (message.type === 'progressive_update') {
             console.log('🔄 Processing progressive update, stage:', message.stage);
+            setIsCallActive(true); // Call is active when we receive updates
             handleProgressiveUpdate(message);
           } 
           // Handle legacy call notifications (OLD FORMAT - for backward compatibility)
           else if (message.type === 'call_notification' && 
               message.data.userExtension === currentUser.username) {
             console.log('📞 Processing legacy call notification');
+            setIsCallActive(true);
             handleIncomingCall(message.data);
           } else if (message.type === 'authenticated') {
             console.log('✅ WebSocket authenticated for user:', currentUser.username);
@@ -228,7 +247,7 @@ function App() {
       setConnectionStatus('error');
       isReconnectingRef.current = false;
     }
-  }, [currentUser, isAuthenticated, reconnectAttempts, startPingInterval]);
+  }, [currentUser, isAuthenticated, reconnectAttempts, startPingInterval, showCustomerPopup]);
 
   const handleProgressiveUpdate = (message) => {
     const { stage, data, callInfo } = message;
@@ -294,7 +313,7 @@ function App() {
       }));
     }
     
-    // Stage 4: Complete data
+    // Stage 4: Complete data (priority contacts)
     else if (stage === 4) {
       console.log('✅ STAGE 4: Complete data received');
       console.log('📦 Complete customer data:', data);
@@ -309,6 +328,25 @@ function App() {
       };
       setNotifications(prev => [notification, ...prev]);
       console.log('✅ Customer data fully loaded and popup updated');
+      
+      // Show message if background contacts are still loading
+      if (data.loadingBackgroundContacts) {
+        console.log('🔄 Background contacts still loading...');
+      }
+    }
+    
+    // Stage 5: Background contacts data (optional)
+    else if (stage === 5) {
+      console.log('🎁 STAGE 5: Background contacts data received');
+      console.log(`📦 Additional ${data.backgroundContactsData?.length || 0} contacts loaded`);
+      
+      setCustomerData(prev => ({
+        ...prev,
+        allContactsData: data.allContactsData,
+        loadingBackgroundContacts: false
+      }));
+      
+      console.log('✅ All background contacts loaded');
     }
   };
 
@@ -384,6 +422,7 @@ function App() {
     setConnectionStatus('disconnected');
     setReconnectAttempts(0);
     setLoadingStage(0);
+    setIsCallActive(false);
   };
 
   const closeCustomerPopup = () => {
@@ -391,6 +430,7 @@ function App() {
     setCustomerData(null);
     setCallInfo(null);
     setLoadingStage(0);
+    setIsCallActive(false);
   };
 
   const getStatusColor = () => {
@@ -463,87 +503,78 @@ function App() {
 
   // Main App
   return (
-    <div className="app">
+    <div className="app pt-20">
+      {/* Fixed Header - Always visible */}
+      <Header 
+        currentUser={currentUser}
+        connectionStatus={connectionStatus}
+        getStatusColor={getStatusColor}
+        getStatusText={getStatusText}
+        handleLogout={handleLogout}
+        reconnectAttempts={reconnectAttempts}
+        MAX_RECONNECT_ATTEMPTS={MAX_RECONNECT_ATTEMPTS}
+        connectWebSocket={connectWebSocket}
+      />
+      
+      <audio ref={audioRef} src="/notification.mp3" preload="auto" />
+      
+      {/* Conditional Content */}
       {!showCustomerPopup ? (
-        <>
-          <Header 
-            currentUser={currentUser}
-            connectionStatus={connectionStatus}
-            getStatusColor={getStatusColor}
-            getStatusText={getStatusText}
-            handleLogout={handleLogout}
-            reconnectAttempts={reconnectAttempts}
-            MAX_RECONNECT_ATTEMPTS={MAX_RECONNECT_ATTEMPTS}
-            connectWebSocket={connectWebSocket}
-          />
-          <audio ref={audioRef} src="/notification.mp3" preload="auto" />
-          <main className="main-content">
-            <div className="notifications-header">
-              <h2>Recent Calls ({notifications.length})</h2>
-              {notifications.length > 0 && (
-                <button className="btn-clear" onClick={() => setNotifications([])}>
-                  Clear All
-                </button>
+        <main className="main-content">
+          <div className="notifications-header">
+            <h2>Recent Calls ({notifications.length})</h2>
+            {notifications.length > 0 && (
+              <button className="btn-clear" onClick={() => setNotifications([])}>
+                Clear All
+              </button>
+            )}
+          </div>
+          {notifications.length === 0 ? (
+            <div className="empty-state">
+              <p>No calls yet. Waiting for incoming calls...</p>
+              {connectionStatus !== 'connected' && (
+                <p className="connection-warning">
+                  Connection status: {getStatusText()}
+                </p>
               )}
             </div>
-            {notifications.length === 0 ? (
-              <div className="empty-state">
-                <p>No calls yet. Waiting for incoming calls...</p>
-                {connectionStatus !== 'connected' && (
-                  <p className="connection-warning">
-                    Connection status: {getStatusText()}
-                  </p>
-                )}
-              </div>
-            ) : (
-              <div className="notifications-list">
-                {notifications.map((notification) => (
-                  <div key={notification.id} className="notification-card">
-                    <div className="notification-header">
-                      <h3>
-                        {notification.customerData?.contact?.fullName || 
-                         notification.callerName || 'Unknown Caller'}
-                      </h3>
-                      <span className="time">
-                        {new Date(notification.timestamp).toLocaleTimeString()}
-                      </span>
-                    </div>
-                    <div className="notification-body">
-                      <p><strong>Number:</strong> {notification.callerNumber}</p>
-                      <p><strong>Extension:</strong> {notification.extension}</p>
-                      {notification.customerData?.contact && (
-                        <>
-                          <p><strong>Customer ID:</strong> {notification.customerData.contact.contactId}</p>
-                          <p><strong>Leads:</strong> {notification.customerData.leads?.length || 0}</p>
-                        </>
-                      )}
-                      <p><strong>Status:</strong> <span className="status-badge-small">{notification.status}</span></p>
-                    </div>
+          ) : (
+            <div className="notifications-list">
+              {notifications.map((notification) => (
+                <div key={notification.id} className="notification-card">
+                  <div className="notification-header">
+                    <h3>
+                      {notification.customerData?.contact?.fullName || 
+                       notification.callerName || 'Unknown Caller'}
+                    </h3>
+                    <span className="time">
+                      {new Date(notification.timestamp).toLocaleTimeString()}
+                    </span>
                   </div>
-                ))}
-              </div>
-            )}
-          </main>
-        </>
+                  <div className="notification-body">
+                    <p><strong>Number:</strong> {notification.callerNumber}</p>
+                    <p><strong>Extension:</strong> {notification.extension}</p>
+                    {notification.customerData?.contact && (
+                      <>
+                        <p><strong>Customer ID:</strong> {notification.customerData.contact.contactId}</p>
+                        <p><strong>Leads:</strong> {notification.customerData.leads?.length || 0}</p>
+                      </>
+                    )}
+                    <p><strong>Status:</strong> <span className="status-badge-small">{notification.status}</span></p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </main>
       ) : (
-        <div className="dashboard-content">
-          <Header 
-            currentUser={currentUser}
-            connectionStatus={connectionStatus}
-            getStatusColor={getStatusColor}
-            getStatusText={getStatusText}
-            handleLogout={handleLogout}
-            reconnectAttempts={reconnectAttempts}
-            MAX_RECONNECT_ATTEMPTS={MAX_RECONNECT_ATTEMPTS}
-            connectWebSocket={connectWebSocket}
-          />
-          <Dashboard 
-            customerDataProp={customerData}
-            fromProp={callInfo?.callerNumber}
-            onClose={closeCustomerPopup}
-            loadingStage={loadingStage}
-          />
-        </div>
+        <Dashboard 
+          customerDataProp={customerData}
+          fromProp={callInfo?.callerNumber}
+          onClose={closeCustomerPopup}
+          loadingStage={loadingStage}
+          isCallActive={isCallActive}
+        />
       )}
     </div>
   );

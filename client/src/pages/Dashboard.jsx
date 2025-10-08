@@ -8,13 +8,13 @@ import ProductSpecialistMainCard from '../components/cards/productSpecialist/pro
 import ServiceAdvisorMainCard from '../components/cards/serviceAdvisor/ServiceAdvisorMainCard';
 import useCallDuration from '../hooks/useCallDuration';
 
-const Dashboard = ({ customerDataProp, fromProp, onClose, loadingStage = 4 }) => {
+const Dashboard = ({ customerDataProp, fromProp, onClose, loadingStage = 4, isCallActive = true }) => {
   const [activeRole, setActiveRole] = useState('receptionist');
   const [customerData, setCustomerData] = useState(customerDataProp);
   const [from] = useState(fromProp);
   const [selectedLeadIndex, setSelectedLeadIndex] = useState(0);
   const [selectedContactIndex, setSelectedContactIndex] = useState(0);
-  const callDuration = useCallDuration();
+  const { callDuration } = useCallDuration(isCallActive);
 
   // CRITICAL: Update customerData when prop changes
   useEffect(() => {
@@ -215,8 +215,10 @@ const Dashboard = ({ customerDataProp, fromProp, onClose, loadingStage = 4 }) =>
       
       <div className="bg-white border-b px-4 py-2 flex items-center justify-between text-sm">
         <div className="flex items-center gap-2">
-          <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-          <span className="text-green-600 text-sm font-semibold">LIVE CALL</span>
+          <div className={`w-2 h-2 ${isCallActive ? 'bg-green-500' : 'bg-red-500'} rounded-full ${isCallActive ? 'animate-pulse' : ''}`}></div>
+          <span className={`${isCallActive ? 'text-green-600' : 'text-red-600'} text-sm font-semibold`}>
+            {isCallActive ? 'LIVE CALL' : 'CALL ENDED'}
+          </span>
           {isLoading && (
             <span className="text-blue-600 text-sm ml-4">
               Loading Stage {loadingStage}/4...
@@ -238,9 +240,10 @@ const Dashboard = ({ customerDataProp, fromProp, onClose, loadingStage = 4 }) =>
         {renderRoleContent()}
       </div>
 
-      <div className="fixed bottom-4 right-4 bg-gray-900 text-white px-3 py-2 rounded-lg shadow-lg flex items-center gap-2 text-sm">
+      <div className={`fixed bottom-4 right-4 ${isCallActive ? 'bg-gray-900' : 'bg-red-900'} text-white px-3 py-2 rounded-lg shadow-lg flex items-center gap-2 text-sm transition-colors`}>
         <Clock className="w-4 h-4" />
         <span>Call Duration: {formatDuration(callDuration)}</span>
+        {!isCallActive && <span className="ml-2 font-bold">(ENDED)</span>}
       </div>
     </div>
   );

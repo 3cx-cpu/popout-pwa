@@ -153,12 +153,12 @@ const ProductSpecialistMainCard = ({ loading, customerData, from, vehicleData, a
                     <div className="text-sm text-gray-600">
                       {salesAgent.userTypes?.join(', ') || 'Sales Representative'}
                     </div>
-                    <div className="flex items-center gap-2 mt-1">
+                    {/* <div className="flex items-center gap-2 mt-1">
                       <span className="bg-green-100 text-green-700 text-sm px-2 py-0.5 rounded">Available</span>
                       <span className="text-sm text-gray-600">Ext: N/A</span>
-                    </div>
+                    </div> */}
                   </div>
-                  <button 
+                  {/* <button 
                     className="text-white text-sm font-medium py-2 px-4 rounded-md flex items-center gap-2 transition-colors"
                     style={{ backgroundColor: '#2b4f7d' }}
                     onMouseEnter={(e) => e.target.style.backgroundColor = '#1e3a5f'}
@@ -166,7 +166,7 @@ const ProductSpecialistMainCard = ({ loading, customerData, from, vehicleData, a
                   >
                     <Phone className="w-4 h-4" />
                     Transfer
-                  </button>
+                  </button> */}
                 </div>
 
                 {salesAgent.emailAddress && (

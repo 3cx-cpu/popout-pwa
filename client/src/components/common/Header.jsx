@@ -1,11 +1,11 @@
-// client\src\components\common\Header.jsx
+// client/src/components/common/Header.jsx
 
 import React from 'react';
 import { Phone, X } from 'lucide-react';
 
 const Header = ({ currentUser, connectionStatus, getStatusColor, getStatusText, handleLogout, reconnectAttempts, MAX_RECONNECT_ATTEMPTS, connectWebSocket }) => {
   return (
-    <div className="relative">
+    <div className="fixed top-0 left-0 right-0 z-50">
       {/* Gradient Header */}
       <div 
         className="text-white px-6 py-3"

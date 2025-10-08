@@ -193,7 +193,15 @@ const CustomerInfoCard = ({ customerData, from, loading, selectedContactIndex, o
 
             {hasMultipleContacts && !isPartiallyLoaded && (
                 <div className="px-4 pb-2 border-t border-gray-100 mt-2">
-                    <div className="text-xs text-gray-600 mb-2">All contacts for this number:</div>
+                    <div className="flex items-center justify-between mb-2">
+                        <div className="text-xs text-gray-600">All contacts for this number:</div>
+                        {customerData?.loadingBackgroundContacts && (
+                            <div className="flex items-center gap-2 text-xs text-blue-600">
+                                <div className="w-3 h-3 border-2 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+                                Loading additional contacts...
+                            </div>
+                        )}
+                    </div>
                     <div className="flex gap-2 flex-wrap">
                         {allContactsData.map((contactData, idx) => (
                             <button
@@ -211,6 +219,11 @@ const CustomerInfoCard = ({ customerData, from, loading, selectedContactIndex, o
                                 )}
                             </button>
                         ))}
+                        {customerData?.loadingBackgroundContacts && (
+                            <div className="px-3 py-1 rounded-full text-sm bg-gray-100 text-gray-500 animate-pulse">
+                                Loading more...
+                            </div>
+                        )}
                     </div>
                 </div>
             )}
