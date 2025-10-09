@@ -4,6 +4,7 @@ const axios = require('axios');
 const cors = require('cors');
 const http = require('http');
 const https = require('https');
+const { connectDB, saveCallData, getCallHistory, getCallById, closeDB } = require('./database');
 
 const app = express();
 const server = http.createServer(app);
@@ -51,7 +52,8 @@ let isConnectingToPBX = false;
 // ============= CACHE STORAGE =============
 const customerDataCache = new Map();
 const hotCache = new Map();
-const processedCalls = new Map();
+const processedCalls = new Map();  // Per-user tracking
+const savedCalls = new Map();       // ✅ Global tracking for DB saves
 // ========================================
 
 // HEARTBEAT CONFIGURATION
@@ -106,6 +108,13 @@ function cleanupOldCaches() {
   for (const [callId, timestamp] of processedCalls.entries()) {
     if (now - timestamp > CALL_CACHE_DURATION) {
       processedCalls.delete(callId);
+    }
+  }
+  
+  // ✅ Cleanup savedCalls
+  for (const [callId, timestamp] of savedCalls.entries()) {
+    if (now - timestamp > CALL_CACHE_DURATION) {
+      savedCalls.delete(callId);
     }
   }
 }
@@ -623,6 +632,32 @@ async function fetchCustomerDataProgressive(phoneNumber, userExtension, callInfo
     // Cache the complete data
     setCachedCustomerData(phoneNumber, completeData);
     
+    // **Save to MongoDB - ONE entry per call (global deduplication)**
+    const callId = callInfo.callId;
+    if (!savedCalls.has(callId)) {
+      try {
+        savedCalls.set(callId, Date.now());
+        const uniqueId = `${callInfo.callId}-${Date.now()}`;
+        await saveCallData({
+          _id: uniqueId,
+          userExtension: userExtension,
+          callId: callInfo.callId,
+          callerName: callInfo.callerName,
+          callerNumber: callInfo.callerNumber,
+          extension: callInfo.extension,
+          status: callInfo.status,
+          timestamp: callInfo.timestamp,
+          customerData: completeData,
+          phoneNumber: phoneNumber
+        });
+        console.log('💾 Call data saved to database');
+      } catch (dbError) {
+        console.error('❌ Failed to save call data:', dbError);
+      }
+    } else {
+      console.log(`⏭️ Skipping DB save - call ${callId} already saved`);
+    }
+    
     const totalDuration = ((Date.now() - overallStartTime) / 1000).toFixed(2);
     console.log(`\n${'='.repeat(70)}`);
     console.log(`✅ PROGRESSIVE FETCH COMPLETE in ${totalDuration}s`);
@@ -678,6 +713,59 @@ app.post('/api/login', async (req, res) => {
     return res.status(401).json({ 
       success: false, 
       message: 'Login failed. Please check your credentials.' 
+    });
+  }
+});
+
+// ============= API ENDPOINTS FOR CALL HISTORY =============
+
+// Get call history for a user
+app.get('/api/call-history/:username', async (req, res) => {
+  try {
+    const { username } = req.params;
+    const limit = parseInt(req.query.limit) || 50;
+    const skip = parseInt(req.query.skip) || 0;
+
+    const calls = await getCallHistory(username, limit, skip);
+    
+    res.json({
+      success: true,
+      count: calls.length,
+      calls: calls
+    });
+  } catch (error) {
+    console.error('Error fetching call history:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch call history',
+      error: error.message
+    });
+  }
+});
+
+// Get specific call by ID
+app.get('/api/call/:callId', async (req, res) => {
+  try {
+    const { callId } = req.params;
+    const call = await getCallById(callId);
+    
+    if (!call) {
+      return res.status(404).json({
+        success: false,
+        message: 'Call not found'
+      });
+    }
+    
+    res.json({
+      success: true,
+      call: call
+    });
+  } catch (error) {
+    console.error('Error fetching call:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch call',
+      error: error.message
     });
   }
 });
@@ -814,29 +902,34 @@ async function connectTo3CXWebSocket() {
                   entity: entity
                 });
                 
-                return; // Don't process further
+                return;
               }
               
               // CHECK FOR RINGING (event_type: 0)
               if (message.event.event_type === 0) {
-                const callKey = `${userExtension}-${message.sequence}-${Date.now()}`;
-                
-                if (processedCalls.has(callKey)) {
-                  return;
-                }
-                
-                processedCalls.set(callKey, Date.now());
-                
-                const callReceiveTime = Date.now();
-                console.log(`\n${'='.repeat(70)}`);
-                console.log(`📞 INCOMING CALL DETECTED`);
-                console.log(`${'='.repeat(70)}`);
-                console.log(`👤 Extension: ${userExtension}`);
-                console.log(`⏰ Timestamp: ${new Date().toISOString()}`);
-                
                 const participantDetails = await getParticipantDetails(entity);
                 
                 if (participantDetails) {
+                  const callId = participantDetails.callid;
+                  const callKey = `${userExtension}-${callId}`; // ✅ Per-user deduplication
+                  
+                  // Check if we've already processed this call for this user
+                  if (processedCalls.has(callKey)) {
+                    console.log(`⏭️ Skipping duplicate call ${callId} for extension ${userExtension} (already processed for this user)`);
+                    return;
+                  }
+                  
+                  // Mark this call as processed for this user
+                  processedCalls.set(callKey, Date.now());
+                  
+                  const callReceiveTime = Date.now();
+                  console.log(`\n${'='.repeat(70)}`);
+                  console.log(`📞 INCOMING CALL DETECTED`);
+                  console.log(`${'='.repeat(70)}`);
+                  console.log(`👤 Extension: ${userExtension}`);
+                  console.log(`📞 Call ID: ${callId}`);
+                  console.log(`⏰ Timestamp: ${new Date().toISOString()}`);
+                  
                   const pbxFetchTime = Date.now();
                   const pbxDuration = ((pbxFetchTime - callReceiveTime) / 1000).toFixed(3);
                   
@@ -892,6 +985,32 @@ async function connectTo3CXWebSocket() {
                     };
                     broadcastToUser(userExtension, legacyNotification);
                     console.log(`📤 Legacy format sent to ${userExtension}`);
+                    
+                    // **Save cached call to MongoDB - ONE entry per call**
+                    if (!savedCalls.has(callId)) {
+                      try {
+                        savedCalls.set(callId, Date.now());
+                        const uniqueId = `${callId}-${Date.now()}`;
+                        await saveCallData({
+                          _id: uniqueId,
+                          userExtension: userExtension,
+                          callId: callInfo.callId,
+                          callerName: callInfo.callerName,
+                          callerNumber: callInfo.callerNumber,
+                          extension: callInfo.extension,
+                          status: callInfo.status,
+                          timestamp: callInfo.timestamp,
+                          customerData: cachedData,
+                          phoneNumber: vinPhoneNumber,
+                          fromCache: true
+                        });
+                        console.log('💾 Cached call data saved to database');
+                      } catch (dbError) {
+                        console.error('❌ Failed to save cached call data:', dbError);
+                      }
+                    } else {
+                      console.log(`⏭️ Skipping DB save - call ${callId} already saved (cached)`);
+                    }
                   } else {
                     // Start progressive fetch
                     console.log(`🔄 Starting progressive data fetch...`);
@@ -1110,6 +1229,7 @@ server.listen(PORT, '0.0.0.0', async () => {
   try {
     await getAccessToken();
     await getVinToken();
+    await connectDB();
     await connectTo3CXWebSocket();
     console.log('✅ All services initialized\n');
   } catch (error) {
@@ -1117,10 +1237,22 @@ server.listen(PORT, '0.0.0.0', async () => {
   }
 });
 
-process.on('SIGTERM', () => {
+process.on('SIGTERM', async () => {
   console.log('SIGTERM received, closing server...');
   clearInterval(heartbeatInterval);
   if (pbxPingInterval) clearInterval(pbxPingInterval);
+  await closeDB();
+  server.close(() => {
+    console.log('Server closed');
+    process.exit(0);
+  });
+});
+
+process.on('SIGINT', async () => {
+  console.log('SIGINT received, closing server...');
+  clearInterval(heartbeatInterval);
+  if (pbxPingInterval) clearInterval(pbxPingInterval);
+  await closeDB();
   server.close(() => {
     console.log('Server closed');
     process.exit(0);

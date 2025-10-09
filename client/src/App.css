@@ -462,3 +462,59 @@ body {
   background: #d97706;
 }
 }
+
+/* Add to existing App.css */
+
+.btn-refresh {
+  background-color: #3b82f6;
+  color: white;
+  padding: 0.5rem 1rem;
+  border-radius: 0.5rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.2s;
+  border: none;
+}
+
+.btn-refresh:hover:not(:disabled) {
+  background-color: #2563eb;
+}
+
+.btn-refresh:disabled {
+  background-color: #9ca3af;
+  cursor: not-allowed;
+}
+
+.notification-card.cursor-pointer {
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.notification-card:hover {
+  background-color: #f9fafb;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+}
+
+.notifications-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1.5rem;
+}
+
+.notifications-header .flex {
+  display: flex;
+}
+
+.notifications-header .gap-2 {
+  gap: 0.5rem;
+}
+
+.status-badge-small {
+  background-color: #dbeafe;
+  color: #1e40af;
+  padding: 0.25rem 0.5rem;
+  border-radius: 0.25rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
