@@ -18,9 +18,9 @@ const CustomerInfoCard = ({ customerData, from, loading, selectedContactIndex, o
     if (loadingStage === 1 || loading) {
         return (
             <div className="bg-[#f7f8f9] border-b border-gray-200">
-                <div className="px-4 py-4 flex items-center justify-between">
-                    <div className="flex items-center gap-4">
-                        <div className="w-20 h-20 rounded-full overflow-hidden bg-gray-300 border-[3px] border-white flex-shrink-0 animate-pulse">
+                <div className="px-4 py-3 flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                        <div className="w-16 h-16 rounded-full overflow-hidden bg-gray-300 border-[3px] border-white flex-shrink-0 animate-pulse">
                             <div className="w-full h-full bg-gray-300 flex items-center justify-center">
                                 <User className="w-10 h-10 text-gray-600" />
                             </div>
@@ -92,8 +92,8 @@ const CustomerInfoCard = ({ customerData, from, loading, selectedContactIndex, o
     return (
         <div className="bg-[#f7f8f9] border-b border-gray-200">
             <div className="px-4 py-3 flex items-center justify-between">
-                <div className="flex items-center gap-4">
-                    <div className="w-20 h-20 rounded-full overflow-hidden bg-gray-300 border-[3px] border-white flex-shrink-0">
+                <div className="flex items-center gap-3">
+                    <div className="w-16 h-16 rounded-full overflow-hidden bg-gray-300 border-[3px] border-white flex-shrink-0">
                         <div className="w-full h-full bg-gray-300 flex items-center justify-center">
                             <User className="w-10 h-10 text-gray-600" />
                         </div>

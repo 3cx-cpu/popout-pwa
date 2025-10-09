@@ -8,7 +8,7 @@ const Header = ({ currentUser, connectionStatus, getStatusColor, getStatusText, 
     <div className="fixed top-0 left-0 right-0 z-50">
       {/* Gradient Header */}
       <div 
-        className="text-white px-6 py-3"
+        className="text-white px-4 py-2"
         style={{
           background: 'linear-gradient(to right, #1b3378 5%, #192f6b 15%, #17295b 25%, #15244c 35%, #132143 50%, #111c39 70%, #0f182d 90%)'
         }}

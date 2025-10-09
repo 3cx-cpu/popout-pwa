@@ -623,7 +623,7 @@ function App() {
       <audio ref={audioRef} src="/notification.mp3" preload="auto" />
 
       {!showCustomerPopup ? (
-        <main className="main-content">
+        <main className="main-content max-w-[1280px] mx-auto px-4">
           <div className="notifications-header">
             <h2>Recent Calls ({currentCalls.length + callHistory.length})</h2>
             <div className="flex gap-2">

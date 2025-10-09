@@ -238,7 +238,7 @@ const Dashboard = ({ customerDataProp, fromProp, onClose, loadingStage = 4, isCa
         )}
       </div>
 
-      <div className="p-4">
+      <div className="p-3">
         {renderRoleContent()}
       </div>
 
