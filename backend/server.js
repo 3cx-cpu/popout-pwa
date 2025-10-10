@@ -951,301 +951,356 @@ async function connectTo3CXWebSocket() {
     });
 
 
-    pbxWebSocket.on('message', async (data) => {
-      try {
-        const message = JSON.parse(data.toString());
+// Replace the WebSocket message handler in your server.js with this fixed version
+// This goes inside the connectTo3CXWebSocket function
 
-        if (message.sequence && message.event && message.event.entity) {
-          if (message.sequence > latestSequence) {
-            latestSequence = message.sequence;
+// Replace the WebSocket message handler in your server.js with this fixed version
+// This goes inside the connectTo3CXWebSocket function
 
-            const entity = message.event.entity;
-            const entityParts = entity.split('/');
+pbxWebSocket.on('message', async (data) => {
+  try {
+    const message = JSON.parse(data.toString());
 
-            if (entityParts.length >= 3 && entityParts[1] === 'callcontrol') {
-              const entityUserExtension = entityParts[2];
+    if (message.sequence && message.event && message.event.entity) {
+      if (message.sequence > latestSequence) {
+        latestSequence = message.sequence;
 
-              // ============= HANDLE EVENT TYPE 1 (CALL END) FIRST =============
-              // Check for call end BEFORE fetching participant details to avoid 401 errors
-              if (message.event.event_type === 1) {
-                console.log(`\n${'='.repeat(70)}`);
-                console.log(`📞 CALL END EVENT DETECTED`);
-                console.log(`   Entity: ${entity}`);
-                console.log(`   User Extension from entity: ${entityUserExtension}`);
-                console.log(`${'='.repeat(70)}\n`);
-
-                // Check all active timers to find matching calls
-                let foundTimer = false;
-
-                for (const [callId, timerInfo] of activeCallTimers.entries()) {
-                  // Check if this end event is for our tracked user
-                  if (timerInfo.userExtension === entityUserExtension ||
-                    entityUserExtension === '10001' || // Trunk line - check all calls
-                    entityUserExtension === timerInfo.userExtension) {
-
-                    console.log(`🔍 Checking timer for callId ${callId}, user ${timerInfo.userExtension}`);
-
-                    // IMPORTANT: Check if this is too soon after connection
-                    const timeSinceStart = Date.now() - timerInfo.startTime;
-                    if (timeSinceStart < 2000) { // Less than 2 seconds since timer started
-                      console.log(`⏭️ Ignoring event_type:1 - only ${timeSinceStart}ms since call connected (too soon)`);
-
-                      // Mark that we've seen the first end event
-                      timerInfo.firstEndEventSeen = true;
-                      activeCallTimers.set(callId, timerInfo);
-                      foundTimer = true;
-                      break;
-                    }
-
-                    // Check if we need to see a second end event
-                    if (timerInfo.requireSecondEndEvent && !timerInfo.firstEndEventSeen) {
-                      console.log(`⏭️ Waiting for second end event for call ${callId}`);
-                      timerInfo.firstEndEventSeen = true;
-                      activeCallTimers.set(callId, timerInfo);
-                      foundTimer = true;
-                      break;
-                    }
-
-                    // Try to verify this is the right call
-                    try {
-                      const participantDetails = await getParticipantDetails(entity);
-
-                      if (participantDetails && participantDetails.callid === parseInt(callId)) {
-                        console.log(`✅ Verified call ${callId} is ending`);
-                        endCallTimer(callId, timerInfo.userExtension);
-
-                        // Send call end notification
-                        broadcastToUser(timerInfo.userExtension, {
-                          type: 'call_ended',
-                          timestamp: new Date().toISOString(),
-                          userExtension: timerInfo.userExtension,
-                          entity: entity,
-                          callId: callId
-                        });
-
-                        foundTimer = true;
-                        break;
-                      }
-                    } catch (error) {
-                      // If we can't get participant details but enough time has passed
-                      if (timerInfo.userExtension === entityUserExtension && timeSinceStart > 5000) {
-                        console.log(`⚠️ Cannot verify call details, but ending timer after ${timeSinceStart}ms`);
-                        endCallTimer(callId, timerInfo.userExtension);
-
-                        // Send call end notification
-                        broadcastToUser(timerInfo.userExtension, {
-                          type: 'call_ended',
-                          timestamp: new Date().toISOString(),
-                          userExtension: timerInfo.userExtension,
-                          entity: entity,
-                          callId: callId
-                        });
-
-                        foundTimer = true;
-                        break;
-                      } else {
-                        console.log(`⏭️ Skipping end event - cannot verify and too soon (${timeSinceStart}ms)`);
-                      }
-                    }
-                  }
-                }
-
-                // If no timer was found but it's for our tracked extensions, still send notification
-                // BUT only if this isn't immediately after a connection
-                if (!foundTimer) {
-                  const targetExtensions = ['3000']; // Add all your user extensions here
-
-                  if (targetExtensions.includes(entityUserExtension)) {
-                    console.log(`📢 Sending call end notification for ${entityUserExtension} (no active timer)`);
-                    broadcastToUser(entityUserExtension, {
-                      type: 'call_ended',
-                      timestamp: new Date().toISOString(),
-                      userExtension: entityUserExtension,
-                      entity: entity,
-                      callId: 'unknown'
-                    });
-                  }
-                }
-
-                return; // Exit early for end events
+        const entity = message.event.entity;
+        const entityParts = entity.split('/');
+        
+        if (entityParts.length >= 3 && entityParts[1] === 'callcontrol') {
+          const entityUserExtension = entityParts[2];
+          
+          // ============= HANDLE EVENT TYPE 1 (CALL END) FIRST =============
+          if (message.event.event_type === 1) {
+            console.log(`\n${'='.repeat(70)}`);
+            console.log(`📞 CALL END EVENT DETECTED`);
+            console.log(`   Entity: ${entity}`);
+            console.log(`   User Extension from entity: ${entityUserExtension}`);
+            console.log(`${'='.repeat(70)}\n`);
+            
+            // Try to get participant details to find the correct callId
+            let callIdToEnd = null;
+            let participantDetails = null;
+            
+            try {
+              participantDetails = await getParticipantDetails(entity);
+              if (participantDetails) {
+                callIdToEnd = participantDetails.callid;
+                console.log(`✅ Got call ID from participant details: ${callIdToEnd}`);
               }
+            } catch (error) {
+              console.log(`⚠️ Could not get participant details: ${error.message}`);
+            }
+            
+            // Look for the timer to end
+            let timerFound = false;
+            
+            // If we have a specific callId, try to find that timer first
+            if (callIdToEnd && activeCallTimers.has(String(callIdToEnd))) {
+              const timerInfo = activeCallTimers.get(String(callIdToEnd));
+              console.log(`🔍 Found timer for callId ${callIdToEnd}, user ${timerInfo.userExtension}`);
+              console.log(`📊 Timer details: expectingImmediateEnd=${timerInfo.expectingImmediateEnd}, userExtension=${timerInfo.userExtension}, entityUserExtension=${entityUserExtension}`);
+              
+              // Check if this is the immediate end event we're expecting
+              const timeSinceStart = Date.now() - timerInfo.startTime;
+              
+              // Only ignore if this is for the SAME user extension that started the timer
+              if (timerInfo.expectingImmediateEnd && timerInfo.userExtension === entityUserExtension) {
+                console.log(`⏭️ Ignoring expected immediate event_type:1 for user ${entityUserExtension} - ${timeSinceStart}ms since call connected`);
+                console.log(`📌 This is the automatic end event that comes after connection - ignoring`);
+                timerInfo.expectingImmediateEnd = false; // Clear the flag
+                activeCallTimers.set(String(callIdToEnd), timerInfo);
+                timerFound = true;
+              } else if (!timerInfo.expectingImmediateEnd && (timerInfo.userExtension === entityUserExtension || entityUserExtension === '10001')) {
+                // This is a real end event - only end if flag has been cleared
+                console.log(`✅ Ending timer for call ${callIdToEnd} after ${timeSinceStart}ms (real call end)`);
+                endCallTimer(String(callIdToEnd), timerInfo.userExtension);
+                
+                // Send call end notification
+                broadcastToUser(timerInfo.userExtension, {
+                  type: 'call_ended',
+                  timestamp: new Date().toISOString(),
+                  userExtension: timerInfo.userExtension,
+                  entity: entity,
+                  callId: String(callIdToEnd)
+                });
+                
+                timerFound = true;
+              } else {
+                console.log(`⏭️ Skipping end event - conditions not met for ending timer`);
+              }
+            }
+            
+            // If we couldn't find by specific callId, search all timers
+            if (!timerFound) {
+              // Get all currently connected user extensions
+              const targetExtensions = new Set();
+              connectedClients.forEach((clientInfo) => {
+                if (clientInfo.authenticated && clientInfo.username) {
+                  targetExtensions.add(clientInfo.username);
+                }
+              });
+              
+              for (const [callId, timerInfo] of activeCallTimers.entries()) {
+                // Check if this could be the right timer based on extension
+                if ((timerInfo.userExtension === entityUserExtension) || 
+                    (entityUserExtension === '10001' && targetExtensions.has(timerInfo.userExtension))) {
+                  
+                  const timeSinceStart = Date.now() - timerInfo.startTime;
+                  
+                  console.log(`📊 Checking timer: callId=${callId}, userExt=${timerInfo.userExtension}, entityExt=${entityUserExtension}`);
+                  console.log(`📊 Timer flags: expectingImmediateEnd=${timerInfo.expectingImmediateEnd}, timeSinceStart=${timeSinceStart}ms`);
+                  
+                  // Only ignore if this is for the SAME user extension AND flag is set
+                  if (timerInfo.expectingImmediateEnd && timerInfo.userExtension === entityUserExtension) {
+                    console.log(`⏭️ Ignoring expected immediate event_type:1 for call ${callId} user ${entityUserExtension} - ${timeSinceStart}ms since connected`);
+                    console.log(`📌 This is the automatic end event that comes after connection - ignoring`);
+                    timerInfo.expectingImmediateEnd = false; // Clear the flag only for matching user
+                    activeCallTimers.set(callId, timerInfo);
+                    timerFound = true;
+                    break;
+                  } else if (!timerInfo.expectingImmediateEnd || timerInfo.userExtension !== entityUserExtension) {
+                    // This is a real end event OR different extension (trunk scenario)
+                    // But we should still check if it's the right call
+                    if (timerInfo.userExtension === entityUserExtension || 
+                        (entityUserExtension === '10001' && !timerInfo.expectingImmediateEnd)) {
+                      console.log(`✅ Ending timer for call ${callId} after ${timeSinceStart}ms (real call end)`);
+                      endCallTimer(callId, timerInfo.userExtension);
+                      
+                      // Send call end notification
+                      broadcastToUser(timerInfo.userExtension, {
+                        type: 'call_ended',
+                        timestamp: new Date().toISOString(),
+                        userExtension: timerInfo.userExtension,
+                        entity: entity,
+                        callId: callId
+                      });
+                      
+                      timerFound = true;
+                      break;
+                    } else {
+                      console.log(`⏭️ Skipping end event - wrong extension or still expecting immediate end`);
+                    }
+                  }
+                }
+              }
+            }
+            
+            // Only send "no active timer" message if this is for a connected user
+            if (!timerFound) {
+              const targetExtensions = new Set();
+              connectedClients.forEach((clientInfo) => {
+                if (clientInfo.authenticated && clientInfo.username) {
+                  targetExtensions.add(clientInfo.username);
+                }
+              });
+              
+              if (targetExtensions.has(entityUserExtension)) {
+                console.log(`📢 Sending call end notification for ${entityUserExtension} (no active timer)`);
+                broadcastToUser(entityUserExtension, {
+                  type: 'call_ended',
+                  timestamp: new Date().toISOString(),
+                  userExtension: entityUserExtension,
+                  entity: entity,
+                  callId: callIdToEnd || 'unknown'
+                });
+              }
+            }
+            
+            return; // Exit early for end events
+          }
+          
+          // ============= FOR OTHER EVENTS, FETCH PARTICIPANT DETAILS =============
+          const participantDetails = await getParticipantDetails(entity);
+          
+          if (!participantDetails) {
+            console.log(`⚠️ Could not get participant details for entity: ${entity}`);
+            return;
+          }
 
-              // ============= FOR OTHER EVENTS, FETCH PARTICIPANT DETAILS =============
-              const participantDetails = await getParticipantDetails(entity);
+          const callId = String(participantDetails.callid); // Always use string for consistency
+          
+          // ============= CHECK FOR CONNECTED STATUS TO START TIMER =============
+          if (participantDetails.status === "Connected") {
+            // Get all currently connected user extensions from connectedClients
+            const targetExtensions = new Set();
+            connectedClients.forEach((clientInfo) => {
+              if (clientInfo.authenticated && clientInfo.username) {
+                targetExtensions.add(clientInfo.username);
+              }
+            });
+            
+            console.log(`🎯 Currently tracking extensions: ${Array.from(targetExtensions).join(', ')}`);
+            
+            let shouldStartTimer = false;
+            let timerUserExtension = null;
 
-              if (!participantDetails) {
-                console.log(`⚠️ Could not get participant details for entity: ${entity}`);
+            // Check if direct user connection
+            if (targetExtensions.has(entityUserExtension)) {
+              shouldStartTimer = true;
+              timerUserExtension = entityUserExtension;
+              console.log(`✅ Direct connection detected for user ${entityUserExtension}`);
+            }
+            // Check if party_dn contains our user (trunk scenario)
+            else if (participantDetails.party_dn && targetExtensions.has(participantDetails.party_dn)) {
+              shouldStartTimer = true;
+              timerUserExtension = participantDetails.party_dn;
+              console.log(`✅ Trunk connection detected for user ${participantDetails.party_dn} via ${entityUserExtension}`);
+            }
+
+            if (shouldStartTimer && timerUserExtension) {
+              // Check if timer already exists for this call
+              if (activeCallTimers.has(callId)) {
+                const existingTimer = activeCallTimers.get(callId);
+                console.log(`⏱️ Timer already running for call ${callId} - user: ${existingTimer.userExtension}`);
+                // Check if this is a trunk connection for the same call
+                if (entityUserExtension === '10001' && existingTimer.expectingImmediateEnd) {
+                  console.log(`📌 Trunk connection detected - maintaining expectingImmediateEnd flag`);
+                }
                 return;
               }
 
-              const callId = participantDetails.callid;
+              const startTime = Date.now();
+              activeCallTimers.set(callId, {
+                startTime: startTime,
+                userExtension: timerUserExtension,
+                status: 'active',
+                expectingImmediateEnd: true, // Flag to ignore the next end event from same user
+                startedFromEntity: entityUserExtension // Track which entity started this timer
+              });
 
-              // ============= CHECK FOR CONNECTED STATUS TO START TIMER =============
-              if (participantDetails.status === "Connected") {
-                // Check if this is our user or check party_dn for our user
-                const targetExtensions = ['3000']; // Add all your user extensions here
-
-                let shouldStartTimer = false;
-                let timerUserExtension = null;
-
-                // Check if direct user connection
-                if (targetExtensions.includes(entityUserExtension)) {
-                  shouldStartTimer = true;
-                  timerUserExtension = entityUserExtension;
-                  console.log(`✅ Direct connection detected for user ${entityUserExtension}`);
-                }
-                // Check if party_dn contains our user (trunk scenario)
-                else if (participantDetails.party_dn && targetExtensions.includes(participantDetails.party_dn)) {
-                  shouldStartTimer = true;
-                  timerUserExtension = participantDetails.party_dn;
-                  console.log(`✅ Trunk connection detected for user ${participantDetails.party_dn} via ${entityUserExtension}`);
-                }
-
-                if (shouldStartTimer && timerUserExtension) {
-                  // Check if timer already exists for this call
-                  if (activeCallTimers.has(callId)) {
-                    console.log(`⏱️ Timer already running for call ${callId}`);
-                    return;
-                  }
-
-                  const startTime = Date.now();
-                  activeCallTimers.set(callId, {
-                    startTime: startTime,
-                    userExtension: timerUserExtension,
-                    status: 'active',
-                    requireSecondEndEvent: false, // We'll rely on time-based filtering instead
-                    firstEndEventSeen: false
-                  });
-
-                  console.log(`⏱️ CALL TIMER STARTED - Call ID: ${callId}, User: ${timerUserExtension}`);
-
-                  // Send timer started notification
-                  broadcastToUser(timerUserExtension, {
-                    type: 'call_timer_started',
-                    callId: callId,
-                    startTime: startTime,
-                    timestamp: new Date().toISOString()
-                  });
-                }
-              }
-
-              // ============= CHECK FOR RINGING (event_type: 0) =============
-              if (message.event.event_type === 0 && participantDetails.status === "Ringing") {
-                const callKey = `${entityUserExtension}-${callId}`;
-
-                // Check if we've already processed this call for this user
-                if (processedCalls.has(callKey)) {
-                  console.log(`⏭️ Skipping duplicate call ${callId} for extension ${entityUserExtension}`);
-                  return;
-                }
-
-                // Mark this call as processed for this user
-                processedCalls.set(callKey, Date.now());
-
-                const callReceiveTime = Date.now();
-                console.log(`\n${'='.repeat(70)}`);
-                console.log(`📞 INCOMING CALL DETECTED`);
-                console.log(`${'='.repeat(70)}`);
-                console.log(`👤 Extension: ${entityUserExtension}`);
-                console.log(`📞 Call ID: ${callId}`);
-                console.log(`⏰ Timestamp: ${new Date().toISOString()}`);
-
-                const pbxFetchTime = Date.now();
-                const pbxDuration = ((pbxFetchTime - callReceiveTime) / 1000).toFixed(3);
-
-                const callerNumber = participantDetails.party_caller_id;
-
-                console.log(`\n📋 3CX CALL DETAILS RECEIVED (${pbxDuration}s):`);
-                console.log(`   Caller Name: ${participantDetails.party_caller_name}`);
-                console.log(`   Caller Number: ${callerNumber}`);
-                console.log(`   Status: ${participantDetails.status}`);
-                console.log(`   Call ID: ${participantDetails.callid}`);
-
-                let vinPhoneNumber;
-                if (PRODUCTION_MODE) {
-                  vinPhoneNumber = extractPhoneDigits(callerNumber);
-                  console.log(`✅ PRODUCTION MODE: Using actual number: ${vinPhoneNumber}`);
-                } else {
-                  vinPhoneNumber = TEST_PHONE_NUMBER;
-                  console.log(`🧪 TESTING MODE: Using test number: ${vinPhoneNumber}`);
-                }
-
-                const callInfo = {
-                  callerName: participantDetails.party_caller_name,
-                  callerNumber: participantDetails.party_caller_id,
-                  extension: participantDetails.dn,
-                  status: participantDetails.status,
-                  partyDnType: participantDetails.party_dn_type,
-                  callId: participantDetails.callid,
-                  timestamp: new Date().toISOString(),
-                  userExtension: entityUserExtension
-                };
-
-                // STAGE 1: Send immediate notification with phone number only
-                console.log(`\n📤 STAGE 1: Sending immediate phone number...`);
-                sendProgressiveUpdate(entityUserExtension, 1, {
-                  phoneNumber: vinPhoneNumber
-                }, callInfo);
-
-                // Check cache first
-                const cachedData = getCachedCustomerData(vinPhoneNumber);
-
-                if (cachedData) {
-                  // Send cached data immediately as complete
-                  console.log(`🎯 Using cached data - sending as complete`);
-                  sendProgressiveUpdate(entityUserExtension, 4, cachedData, callInfo);
-
-                  // ALSO send in legacy format for backward compatibility
-                  const legacyNotification = {
-                    type: 'call_notification',
-                    data: {
-                      ...callInfo,
-                      customerData: cachedData
-                    }
-                  };
-                  broadcastToUser(entityUserExtension, legacyNotification);
-                  console.log(`📤 Legacy format sent to ${entityUserExtension}`);
-
-                  // Save cached call to MongoDB
-                  if (!savedCalls.has(callId)) {
-                    try {
-                      savedCalls.set(callId, Date.now());
-                      const uniqueId = `${callId}-${Date.now()}`;
-                      await saveCallData({
-                        _id: uniqueId,
-                        userExtension: entityUserExtension,
-                        callId: callInfo.callId,
-                        callerName: callInfo.callerName,
-                        callerNumber: callInfo.callerNumber,
-                        extension: callInfo.extension,
-                        status: callInfo.status,
-                        timestamp: callInfo.timestamp,
-                        customerData: cachedData,
-                        phoneNumber: vinPhoneNumber,
-                        fromCache: true
-                      });
-                      console.log('💾 Cached call data saved to database');
-                    } catch (dbError) {
-                      console.error('❌ Failed to save cached call data:', dbError);
-                    }
-                  }
-                } else {
-                  // Start progressive fetch
-                  console.log(`🔄 Starting progressive data fetch...`);
-                  await fetchCustomerDataProgressive(vinPhoneNumber, entityUserExtension, callInfo);
-                }
-
-                const totalCallHandlingTime = ((Date.now() - callReceiveTime) / 1000).toFixed(2);
-                console.log(`\n⏱️ Total call handling time: ${totalCallHandlingTime}s`);
-                console.log(`${'='.repeat(70)}\n`);
-              }
+              console.log(`⏱️ CALL TIMER STARTED - Call ID: ${callId}, User: ${timerUserExtension}, Entity: ${entityUserExtension}`);
+              console.log(`📊 Active timers: ${Array.from(activeCallTimers.keys()).join(', ')}`);
+              console.log(`⚠️ Expecting immediate end event for call ${callId} from user ${timerUserExtension} - will ignore first end event from same user`);
+              
+              // Send timer started notification
+              broadcastToUser(timerUserExtension, {
+                type: 'call_timer_started',
+                callId: callId,
+                startTime: startTime,
+                timestamp: new Date().toISOString()
+              });
             }
           }
+          
+          // ============= CHECK FOR RINGING (event_type: 0) =============
+          if (message.event.event_type === 0 && participantDetails.status === "Ringing") {
+            const callKey = `${entityUserExtension}-${callId}`;
+            
+            // Check if we've already processed this call for this user
+            if (processedCalls.has(callKey)) {
+              console.log(`⏭️ Skipping duplicate call ${callId} for extension ${entityUserExtension}`);
+              return;
+            }
+            
+            // Mark this call as processed for this user
+            processedCalls.set(callKey, Date.now());
+            
+            const callReceiveTime = Date.now();
+            console.log(`\n${'='.repeat(70)}`);
+            console.log(`📞 INCOMING CALL DETECTED`);
+            console.log(`${'='.repeat(70)}`);
+            console.log(`👤 Extension: ${entityUserExtension}`);
+            console.log(`📞 Call ID: ${callId}`);
+            console.log(`⏰ Timestamp: ${new Date().toISOString()}`);
+            
+            const pbxFetchTime = Date.now();
+            const pbxDuration = ((pbxFetchTime - callReceiveTime) / 1000).toFixed(3);
+            
+            const callerNumber = participantDetails.party_caller_id;
+            
+            console.log(`\n📋 3CX CALL DETAILS RECEIVED (${pbxDuration}s):`);
+            console.log(`   Caller Name: ${participantDetails.party_caller_name}`);
+            console.log(`   Caller Number: ${callerNumber}`);
+            console.log(`   Status: ${participantDetails.status}`);
+            console.log(`   Call ID: ${participantDetails.callid}`);
+            
+            let vinPhoneNumber;
+            if (PRODUCTION_MODE) {
+              vinPhoneNumber = extractPhoneDigits(callerNumber);
+              console.log(`✅ PRODUCTION MODE: Using actual number: ${vinPhoneNumber}`);
+            } else {
+              vinPhoneNumber = TEST_PHONE_NUMBER;
+              console.log(`🧪 TESTING MODE: Using test number: ${vinPhoneNumber}`);
+            }
+            
+            const callInfo = {
+              callerName: participantDetails.party_caller_name,
+              callerNumber: participantDetails.party_caller_id,
+              extension: participantDetails.dn,
+              status: participantDetails.status,
+              partyDnType: participantDetails.party_dn_type,
+              callId: callId, // Use string version
+              timestamp: new Date().toISOString(),
+              userExtension: entityUserExtension
+            };
+            
+            // STAGE 1: Send immediate notification with phone number only
+            console.log(`\n📤 STAGE 1: Sending immediate phone number...`);
+            sendProgressiveUpdate(entityUserExtension, 1, {
+              phoneNumber: vinPhoneNumber
+            }, callInfo);
+            
+            // Check cache first
+            const cachedData = getCachedCustomerData(vinPhoneNumber);
+            
+            if (cachedData) {
+              // Send cached data immediately as complete
+              console.log(`🎯 Using cached data - sending as complete`);
+              sendProgressiveUpdate(entityUserExtension, 4, cachedData, callInfo);
+              
+              // ALSO send in legacy format for backward compatibility
+              const legacyNotification = {
+                type: 'call_notification',
+                data: {
+                  ...callInfo,
+                  customerData: cachedData
+                }
+              };
+              broadcastToUser(entityUserExtension, legacyNotification);
+              console.log(`📤 Legacy format sent to ${entityUserExtension}`);
+              
+              // Save cached call to MongoDB
+              if (!savedCalls.has(callId)) {
+                try {
+                  savedCalls.set(callId, Date.now());
+                  const uniqueId = `${callId}-${Date.now()}`;
+                  await saveCallData({
+                    _id: uniqueId,
+                    userExtension: entityUserExtension,
+                    callId: callInfo.callId,
+                    callerName: callInfo.callerName,
+                    callerNumber: callInfo.callerNumber,
+                    extension: callInfo.extension,
+                    status: callInfo.status,
+                    timestamp: callInfo.timestamp,
+                    customerData: cachedData,
+                    phoneNumber: vinPhoneNumber,
+                    fromCache: true
+                  });
+                  console.log('💾 Cached call data saved to database');
+                } catch (dbError) {
+                  console.error('❌ Failed to save cached call data:', dbError);
+                }
+              }
+            } else {
+              // Start progressive fetch
+              console.log(`🔄 Starting progressive data fetch...`);
+              await fetchCustomerDataProgressive(vinPhoneNumber, entityUserExtension, callInfo);
+            }
+            
+            const totalCallHandlingTime = ((Date.now() - callReceiveTime) / 1000).toFixed(2);
+            console.log(`\n⏱️ Total call handling time: ${totalCallHandlingTime}s`);
+            console.log(`${'='.repeat(70)}\n`);
+          }
         }
-      } catch (error) {
-        console.error('❌ Error processing message:', error.message);
       }
-    });
+    }
+  } catch (error) {
+    console.error('❌ Error processing message:', error.message);
+  }
+});
 
     pbxWebSocket.on('error', (error) => {
       console.error('❌ 3CX WebSocket error:', error.message);
