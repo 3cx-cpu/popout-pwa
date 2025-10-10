@@ -29,6 +29,11 @@ const HOT_CACHE_DURATION = 60 * 1000; // 60 seconds for pre-fetched data
 const CALL_CACHE_DURATION = 60000; // 1 minute
 // ==============================================
 
+// ============= TOKEN REFRESH CONFIGURATION =============
+const TOKEN_REFRESH_INTERVAL = 50000; // Refresh token every 50 seconds (before 60s expiry)
+const TOKEN_REFRESH_BUFFER = 10000; // 10 second buffer before expiry
+// ========================================================
+
 const VIN_CONFIG = {
   tokenUrl: "https://authentication.vinsolutions.com/connect/token",
   apiBaseUrl: "https://api.vinsolutions.com",
@@ -48,18 +53,22 @@ let vinToken = null;
 let vinTokenExpiry = null;
 let pbxReconnectAttempts = 0;
 let isConnectingToPBX = false;
+let tokenRefreshInterval = null;
 
 // ============= CACHE STORAGE =============
 const customerDataCache = new Map();
 const hotCache = new Map();
 const processedCalls = new Map();  // Per-user tracking
-const savedCalls = new Map();       // ✅ Global tracking for DB saves
+const savedCalls = new Map();       // Global tracking for DB saves
+const activeCallTimers = new Map(); // Track active call timers by callId
 // ========================================
 
 // HEARTBEAT CONFIGURATION
 const HEARTBEAT_INTERVAL = 30000;
 const CLIENT_TIMEOUT = 60000;
 const PBX_PING_INTERVAL = 25000;
+const PBX_RECONNECT_MAX_DELAY = 30000;
+const PBX_RECONNECT_BASE_DELAY = 1000;
 
 const axiosInstance = axios.create({
   httpsAgent: new https.Agent({
@@ -75,7 +84,7 @@ function getCacheStats() {
     hotCached: hotCache.size,
     details: []
   };
-  
+
   customerDataCache.forEach((value, key) => {
     const ageMinutes = ((Date.now() - value.timestamp) / 1000 / 60).toFixed(1);
     stats.details.push({
@@ -84,34 +93,33 @@ function getCacheStats() {
       hits: value.hits || 0
     });
   });
-  
+
   return stats;
 }
 
 function cleanupOldCaches() {
   const now = Date.now();
-  
+
   for (const [phone, data] of customerDataCache.entries()) {
     if (now - data.timestamp > CUSTOMER_DATA_CACHE_DURATION) {
       console.log(`🗑️ Removing expired cache for: ${phone} (age: ${((now - data.timestamp) / 1000 / 60).toFixed(1)} min)`);
       customerDataCache.delete(phone);
     }
   }
-  
+
   for (const [phone, data] of hotCache.entries()) {
     if (now - data.timestamp > HOT_CACHE_DURATION) {
       console.log(`🗑️ Removing expired hot cache for: ${phone}`);
       hotCache.delete(phone);
     }
   }
-  
+
   for (const [callId, timestamp] of processedCalls.entries()) {
     if (now - timestamp > CALL_CACHE_DURATION) {
       processedCalls.delete(callId);
     }
   }
-  
-  // ✅ Cleanup savedCalls
+
   for (const [callId, timestamp] of savedCalls.entries()) {
     if (now - timestamp > CALL_CACHE_DURATION) {
       savedCalls.delete(callId);
@@ -123,7 +131,7 @@ setInterval(cleanupOldCaches, 30000);
 
 function getCachedCustomerData(phoneNumber) {
   const cached = customerDataCache.get(phoneNumber);
-  
+
   if (cached && (Date.now() - cached.timestamp < CUSTOMER_DATA_CACHE_DURATION)) {
     cached.hits = (cached.hits || 0) + 1;
     const ageSeconds = ((Date.now() - cached.timestamp) / 1000).toFixed(1);
@@ -136,7 +144,7 @@ function getCachedCustomerData(phoneNumber) {
     console.log(`${'='.repeat(60)}\n`);
     return cached.data;
   }
-  
+
   return null;
 }
 
@@ -159,6 +167,59 @@ function extractPhoneDigits(phone) {
   return digits;
 }
 
+// ============= CALL TIMER MANAGEMENT =============
+
+function startCallTimer(callId, userExtension) {
+  // Check if timer already exists for this call
+  if (activeCallTimers.has(callId)) {
+    console.log(`⏱️ Timer already running for call ${callId}`);
+    return;
+  }
+
+  const startTime = Date.now();
+  activeCallTimers.set(callId, {
+    startTime: startTime,
+    userExtension: userExtension,
+    status: 'active'
+  });
+
+  console.log(`⏱️ CALL TIMER STARTED - Call ID: ${callId}, User: ${userExtension}`);
+
+  // Send timer started notification
+  broadcastToUser(userExtension, {
+    type: 'call_timer_started',
+    callId: callId,
+    startTime: startTime,
+    timestamp: new Date().toISOString()
+  });
+}
+
+function endCallTimer(callId, userExtension) {
+  const timerInfo = activeCallTimers.get(callId);
+
+  if (!timerInfo) {
+    console.log(`⚠️ No active timer found for call ${callId}`);
+    return;
+  }
+
+  const endTime = Date.now();
+  const duration = Math.floor((endTime - timerInfo.startTime) / 1000);
+
+  activeCallTimers.delete(callId);
+
+  console.log(`⏱️ CALL TIMER ENDED - Call ID: ${callId}, Duration: ${duration}s`);
+
+  // Send timer ended notification with duration
+  broadcastToUser(userExtension, {
+    type: 'call_timer_ended',
+    callId: callId,
+    startTime: timerInfo.startTime,
+    endTime: endTime,
+    duration: duration,
+    timestamp: new Date().toISOString()
+  });
+}
+
 // ============= PROGRESSIVE DATA SENDING =============
 
 function sendProgressiveUpdate(userExtension, stage, data, callInfo) {
@@ -169,12 +230,12 @@ function sendProgressiveUpdate(userExtension, stage, data, callInfo) {
     callInfo: callInfo,
     timestamp: new Date().toISOString()
   };
-  
+
   broadcastToUser(userExtension, message);
   console.log(`📤 STAGE ${stage} sent to ${userExtension}`);
 }
 
-// ============= VINSOLUTIONS FUNCTIONS =============
+// ============= VINSOLUTIONS FUNCTIONS (keeping existing) =============
 
 async function getVinToken(forceRefresh = false) {
   try {
@@ -207,18 +268,18 @@ async function getVinToken(forceRefresh = false) {
 async function makeVinRequest(url, params = {}, headers = {}, retryOnAuth = true) {
   try {
     let token = await getVinToken();
-    
+
     const defaultHeaders = {
       "Authorization": `Bearer ${token}`,
       "api_key": VIN_CONFIG.apiKey,
       "Accept": headers.Accept || "application/json"
     };
 
-    const fullParams = { 
+    const fullParams = {
       dealerId: params.dealerId || VIN_CONFIG.dealerId,
-      ...params 
+      ...params
     };
-    
+
     if (url.includes('/gateway/v1/') || url.includes('/leads')) {
       fullParams.userId = params.userId || VIN_CONFIG.userId;
     }
@@ -236,7 +297,7 @@ async function makeVinRequest(url, params = {}, headers = {}, retryOnAuth = true
       await getVinToken(true);
       return makeVinRequest(url, params, headers, false);
     }
-    
+
     if (error.response && error.response.status === 404) {
       return null;
     }
@@ -246,10 +307,10 @@ async function makeVinRequest(url, params = {}, headers = {}, retryOnAuth = true
 
 async function getContactsByPhone(phoneNumber) {
   const url = `${VIN_CONFIG.apiBaseUrl}/gateway/v1/contact`;
-  
+
   try {
     const response = await makeVinRequest(url, { phone: phoneNumber });
-    
+
     if (response && response.length > 0) {
       return response.map((contact) => {
         const contactInfo = contact.ContactInformation;
@@ -282,7 +343,7 @@ async function getLeads(contactId) {
     "Accept": "application/vnd.coxauto.v3+json",
     "Content-Type": "application/vnd.coxauto.v3+json"
   };
-  
+
   try {
     const response = await makeVinRequest(url, params, headers);
     if (response && response.items) {
@@ -312,7 +373,7 @@ async function getVehiclesOfInterest(leadId) {
     "Accept": "application/vnd.coxauto.v1+json",
     "Content-Type": "application/vnd.coxauto.v1+json"
   };
-  
+
   try {
     const response = await makeVinRequest(url, { leadId }, headers);
     if (response && response.items) {
@@ -350,7 +411,7 @@ async function getTradeVehicles(leadId) {
     "Accept": "application/vnd.coxauto.v1+json",
     "Content-Type": "application/vnd.coxauto.v1+json"
   };
-  
+
   try {
     const response = await makeVinRequest(url, { leadId }, headers);
     if (response && response.items) {
@@ -372,7 +433,7 @@ async function getTradeVehicles(leadId) {
 async function getLeadSource(leadSourceId) {
   const url = `${VIN_CONFIG.apiBaseUrl}/leadSources/id/${leadSourceId}`;
   const headers = { "Accept": "application/vnd.coxauto.v1+json" };
-  
+
   try {
     const response = await makeVinRequest(url, {}, headers);
     if (response) {
@@ -389,10 +450,10 @@ async function getLeadSource(leadSourceId) {
 
 async function getUserById(userId) {
   if (!userId || userId === 0) return null;
-  
+
   const url = `${VIN_CONFIG.apiBaseUrl}/gateway/v1/tenant/user/id/${userId}`;
   const params = { dealerId: VIN_CONFIG.dealerId, limit: 100, UserId: userId };
-  
+
   try {
     const response = await makeVinRequest(url, params);
     if (response) {
@@ -415,17 +476,17 @@ async function getContactDetails(contactUrl) {
   try {
     const urlMatch = contactUrl.match(/contacts\/id\/(\d+)\?dealerid=(\d+)/);
     if (!urlMatch) return null;
-    
+
     const contactId = urlMatch[1];
     const dealerId = urlMatch[2];
     const url = `${VIN_CONFIG.apiBaseUrl}/contacts/id/${contactId}`;
     const params = { dealerId, userId: VIN_CONFIG.userId };
-    
+
     const response = await makeVinRequest(url, params);
     if (response && response.length > 0) {
       const contactData = response[0];
       const salesRep = contactData.DealerTeam?.find(member => member.RoleName === "Sales Rep");
-      
+
       return {
         contactInfo: contactData.ContactInformation,
         dealerTeam: contactData.DealerTeam,
@@ -450,11 +511,11 @@ async function processLeadsInParallel(leads) {
       })() : Promise.resolve(null),
       lead.contact ? getContactDetails(lead.contact) : Promise.resolve(null)
     ]);
-    
+
     const salesRepData = contactDetails.status === 'fulfilled' && contactDetails.value?.salesRepUserId
       ? await getUserById(contactDetails.value.salesRepUserId)
       : null;
-    
+
     return {
       ...lead,
       vehiclesOfInterest: vehiclesOfInterest.status === 'fulfilled' ? vehiclesOfInterest.value : [],
@@ -463,57 +524,57 @@ async function processLeadsInParallel(leads) {
       salesRepInfo: salesRepData
     };
   });
-  
+
   return Promise.all(leadPromises);
 }
 
-// ============= PROGRESSIVE DATA FETCHING =============
+// ============= PROGRESSIVE DATA FETCHING (keeping existing) =============
 
 async function fetchCustomerDataProgressive(phoneNumber, userExtension, callInfo) {
   const overallStartTime = Date.now();
   console.log(`\n${'='.repeat(70)}`);
   console.log(`📊 PROGRESSIVE DATA FETCH STARTED for: ${phoneNumber}`);
   console.log(`${'='.repeat(70)}\n`);
-  
+
   try {
     // STAGE 2: Fetch Basic Contact Info
     const stage2Start = Date.now();
     console.log(`📥 STAGE 2: Fetching basic contact info...`);
     const contacts = await getContactsByPhone(phoneNumber);
     const stage2Duration = ((Date.now() - stage2Start) / 1000).toFixed(2);
-    
+
     if (!contacts || contacts.length === 0) {
       console.log(`❌ No contacts found for: ${phoneNumber} (${stage2Duration}s)`);
-      sendProgressiveUpdate(userExtension, 2, { 
+      sendProgressiveUpdate(userExtension, 2, {
         contact: null,
         error: 'No contact found'
       }, callInfo);
       return null;
     }
-    
+
     console.log(`✅ STAGE 2 Complete: Found ${contacts.length} contact(s) in ${stage2Duration}s`);
-    
+
     // Send Stage 2 data immediately
     sendProgressiveUpdate(userExtension, 2, {
       contact: contacts[0],
       contacts: contacts,
       hasMultipleContacts: contacts.length > 1
     }, callInfo);
-    
+
     // STAGE 3: Fetch Lead Summaries
     const stage3Start = Date.now();
     console.log(`📥 STAGE 3: Fetching lead summaries...`);
-    
+
     const allContactsDataPromises = contacts.map(async (contact) => {
       const leads = await getLeads(contact.contactId);
       return { contact, leads, leadCount: leads.length };
     });
-    
+
     const contactsWithLeads = await Promise.all(allContactsDataPromises);
     const stage3Duration = ((Date.now() - stage3Start) / 1000).toFixed(2);
-    
+
     console.log(`✅ STAGE 3 Complete: Fetched lead summaries in ${stage3Duration}s`);
-    
+
     // Send Stage 3 data
     const primaryContactLeads = contactsWithLeads[0];
     sendProgressiveUpdate(userExtension, 3, {
@@ -528,19 +589,19 @@ async function fetchCustomerDataProgressive(phoneNumber, userExtension, callInfo
         leadCount: c.leadCount
       }))
     }, callInfo);
-    
+
     // STAGE 4: Fetch Detailed Lead Data (vehicles, sales rep)
     const stage4Start = Date.now();
     console.log(`📥 STAGE 4: Fetching detailed lead data...`);
-    
+
     const allContactsDetailedData = await Promise.all(
       contactsWithLeads.map(async ({ contact, leads }) => {
         let allLeadsData = [];
         let primarySalesRepInfo = null;
-        
+
         if (leads.length > 0) {
           allLeadsData = await processLeadsInParallel(leads);
-          
+
           for (const leadData of allLeadsData) {
             if (leadData.salesRepInfo) {
               primarySalesRepInfo = leadData.salesRepInfo;
@@ -548,24 +609,24 @@ async function fetchCustomerDataProgressive(phoneNumber, userExtension, callInfo
             }
           }
         }
-        
+
         const salesAssignment = await getUserById(VIN_CONFIG.userId);
-        
+
         const isVehicleComplete = (vehicle) => {
-          return vehicle.make !== null && vehicle.model !== null && 
-                 vehicle.make !== '' && vehicle.model !== '';
+          return vehicle.make !== null && vehicle.model !== null &&
+            vehicle.make !== '' && vehicle.model !== '';
         };
-        
+
         const processedLeadsData = allLeadsData.map(lead => {
           const vehiclesOfInterest = lead.vehiclesOfInterest || [];
           const tradeVehicles = lead.tradeVehicles || [];
-          
+
           const validVOI = vehiclesOfInterest.filter(isVehicleComplete);
           const incompleteVOI = vehiclesOfInterest.filter(v => !isVehicleComplete(v));
-          
+
           const validTrade = tradeVehicles.filter(isVehicleComplete);
           const incompleteTrade = tradeVehicles.filter(v => !isVehicleComplete(v));
-          
+
           return {
             ...lead,
             vehiclesOfInterest: validVOI,
@@ -574,12 +635,12 @@ async function fetchCustomerDataProgressive(phoneNumber, userExtension, callInfo
             incompleteTradeVehicles: incompleteTrade
           };
         });
-        
+
         const allValidVOI = processedLeadsData.flatMap(lead => lead.vehiclesOfInterest || []);
         const allIncompleteVOI = processedLeadsData.flatMap(lead => lead.incompleteVehiclesOfInterest || []);
         const allValidTrade = processedLeadsData.flatMap(lead => lead.tradeVehicles || []);
         const allIncompleteTrade = processedLeadsData.flatMap(lead => lead.incompleteTradeVehicles || []);
-        
+
         return {
           contact,
           leads,
@@ -594,10 +655,10 @@ async function fetchCustomerDataProgressive(phoneNumber, userExtension, callInfo
         };
       })
     );
-    
+
     const stage4Duration = ((Date.now() - stage4Start) / 1000).toFixed(2);
     console.log(`✅ STAGE 4 Complete: Detailed lead data in ${stage4Duration}s`);
-    
+
     // Build final complete data structure
     const completeData = {
       contact: contacts[0],
@@ -614,10 +675,10 @@ async function fetchCustomerDataProgressive(phoneNumber, userExtension, callInfo
       allContactsData: allContactsDetailedData,
       hasMultipleContacts: contacts.length > 1
     };
-    
+
     // Send Stage 4 (Complete) data
     sendProgressiveUpdate(userExtension, 4, completeData, callInfo);
-    
+
     // ALSO send in legacy format for backward compatibility
     const legacyNotification = {
       type: 'call_notification',
@@ -628,11 +689,11 @@ async function fetchCustomerDataProgressive(phoneNumber, userExtension, callInfo
     };
     broadcastToUser(userExtension, legacyNotification);
     console.log(`📤 Legacy format sent to ${userExtension}`);
-    
+
     // Cache the complete data
     setCachedCustomerData(phoneNumber, completeData);
-    
-    // **Save to MongoDB - ONE entry per call (global deduplication)**
+
+    // Save to MongoDB - ONE entry per call (global deduplication)
     const callId = callInfo.callId;
     if (!savedCalls.has(callId)) {
       try {
@@ -657,7 +718,7 @@ async function fetchCustomerDataProgressive(phoneNumber, userExtension, callInfo
     } else {
       console.log(`⏭️ Skipping DB save - call ${callId} already saved`);
     }
-    
+
     const totalDuration = ((Date.now() - overallStartTime) / 1000).toFixed(2);
     console.log(`\n${'='.repeat(70)}`);
     console.log(`✅ PROGRESSIVE FETCH COMPLETE in ${totalDuration}s`);
@@ -665,9 +726,9 @@ async function fetchCustomerDataProgressive(phoneNumber, userExtension, callInfo
     console.log(`   Stage 3 (Lead Summary):   ${stage3Duration}s`);
     console.log(`   Stage 4 (Complete Data):  ${stage4Duration}s`);
     console.log(`${'='.repeat(70)}\n`);
-    
+
     return completeData;
-    
+
   } catch (error) {
     const duration = ((Date.now() - overallStartTime) / 1000).toFixed(2);
     console.error(`❌ Error in progressive fetch (${duration}s):`, error.message);
@@ -682,9 +743,9 @@ app.post('/api/login', async (req, res) => {
     const { username, password } = req.body;
 
     if (!username || !password) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Username and password are required' 
+      return res.status(400).json({
+        success: false,
+        message: 'Username and password are required'
       });
     }
 
@@ -696,23 +757,23 @@ app.post('/api/login', async (req, res) => {
     });
 
     if (response.status === 200) {
-      return res.json({ 
-        success: true, 
+      return res.json({
+        success: true,
         message: 'Login successful',
         username: username,
         data: response.data
       });
     } else {
-      return res.status(401).json({ 
-        success: false, 
-        message: 'Invalid credentials' 
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid credentials'
       });
     }
   } catch (error) {
     console.error('Login error:', error.response?.data || error.message);
-    return res.status(401).json({ 
-      success: false, 
-      message: 'Login failed. Please check your credentials.' 
+    return res.status(401).json({
+      success: false,
+      message: 'Login failed. Please check your credentials.'
     });
   }
 });
@@ -727,7 +788,7 @@ app.get('/api/call-history/:username', async (req, res) => {
     const skip = parseInt(req.query.skip) || 0;
 
     const calls = await getCallHistory(username, limit, skip);
-    
+
     res.json({
       success: true,
       count: calls.length,
@@ -748,14 +809,14 @@ app.get('/api/call/:callId', async (req, res) => {
   try {
     const { callId } = req.params;
     const call = await getCallById(callId);
-    
+
     if (!call) {
       return res.status(404).json({
         success: false,
         message: 'Call not found'
       });
     }
-    
+
     res.json({
       success: true,
       call: call
@@ -784,9 +845,9 @@ async function getAccessToken() {
     });
 
     accessToken = response.data.access_token;
-    tokenExpiryTime = Date.now() + (response.data.expires_in * 1000) - 5000;
-    
-    console.log('✅ 3CX token obtained');
+    tokenExpiryTime = Date.now() + (response.data.expires_in * 1000) - TOKEN_REFRESH_BUFFER;
+
+    console.log(`✅ 3CX token obtained (expires in ${response.data.expires_in}s)`);
     return accessToken;
   } catch (error) {
     console.error('❌ Error getting 3CX token:', error.message);
@@ -801,11 +862,27 @@ async function ensureValidToken() {
   return accessToken;
 }
 
+// Token refresh mechanism
+function startTokenRefreshInterval() {
+  if (tokenRefreshInterval) {
+    clearInterval(tokenRefreshInterval);
+  }
+
+  tokenRefreshInterval = setInterval(async () => {
+    try {
+      console.log('🔄 Refreshing 3CX token proactively...');
+      await getAccessToken();
+    } catch (error) {
+      console.error('❌ Failed to refresh token proactively:', error.message);
+    }
+  }, TOKEN_REFRESH_INTERVAL);
+}
+
 async function getParticipantDetails(entity, retryCount = 0) {
   try {
     const token = await ensureValidToken();
     const url = `${PBX_BASE_URL}${entity}`;
-    
+
     const response = await axiosInstance.get(url, {
       headers: {
         'Authorization': `Bearer ${token}`
@@ -836,7 +913,7 @@ async function connectTo3CXWebSocket() {
 
   try {
     const token = await ensureValidToken();
-    
+
     if (pbxWebSocket) {
       pbxWebSocket.removeAllListeners();
       pbxWebSocket.close();
@@ -849,7 +926,7 @@ async function connectTo3CXWebSocket() {
     }
 
     console.log('🔌 Connecting to 3CX WebSocket...');
-    
+
     pbxWebSocket = new WebSocket(WS_URL, {
       headers: {
         'Authorization': `Bearer ${token}`
@@ -873,6 +950,7 @@ async function connectTo3CXWebSocket() {
       // Connection is alive
     });
 
+
     pbxWebSocket.on('message', async (data) => {
       try {
         const message = JSON.parse(data.toString());
@@ -883,144 +961,283 @@ async function connectTo3CXWebSocket() {
 
             const entity = message.event.entity;
             const entityParts = entity.split('/');
-            
+
             if (entityParts.length >= 3 && entityParts[1] === 'callcontrol') {
-              const userExtension = entityParts[2];
-              
-              // CHECK FOR CALL END (event_type: 1)
+              const entityUserExtension = entityParts[2];
+
+              // ============= HANDLE EVENT TYPE 1 (CALL END) FIRST =============
+              // Check for call end BEFORE fetching participant details to avoid 401 errors
               if (message.event.event_type === 1) {
                 console.log(`\n${'='.repeat(70)}`);
-                console.log(`📞 CALL ENDED - Extension: ${userExtension}`);
-                console.log(`⏰ Timestamp: ${new Date().toISOString()}`);
+                console.log(`📞 CALL END EVENT DETECTED`);
+                console.log(`   Entity: ${entity}`);
+                console.log(`   User Extension from entity: ${entityUserExtension}`);
                 console.log(`${'='.repeat(70)}\n`);
-                
-                // Send call end notification
-                broadcastToUser(userExtension, {
-                  type: 'call_ended',
-                  timestamp: new Date().toISOString(),
-                  userExtension: userExtension,
-                  entity: entity
-                });
-                
+
+                // Check all active timers to find matching calls
+                let foundTimer = false;
+
+                for (const [callId, timerInfo] of activeCallTimers.entries()) {
+                  // Check if this end event is for our tracked user
+                  if (timerInfo.userExtension === entityUserExtension ||
+                    entityUserExtension === '10001' || // Trunk line - check all calls
+                    entityUserExtension === timerInfo.userExtension) {
+
+                    console.log(`🔍 Checking timer for callId ${callId}, user ${timerInfo.userExtension}`);
+
+                    // IMPORTANT: Check if this is too soon after connection
+                    const timeSinceStart = Date.now() - timerInfo.startTime;
+                    if (timeSinceStart < 2000) { // Less than 2 seconds since timer started
+                      console.log(`⏭️ Ignoring event_type:1 - only ${timeSinceStart}ms since call connected (too soon)`);
+
+                      // Mark that we've seen the first end event
+                      timerInfo.firstEndEventSeen = true;
+                      activeCallTimers.set(callId, timerInfo);
+                      foundTimer = true;
+                      break;
+                    }
+
+                    // Check if we need to see a second end event
+                    if (timerInfo.requireSecondEndEvent && !timerInfo.firstEndEventSeen) {
+                      console.log(`⏭️ Waiting for second end event for call ${callId}`);
+                      timerInfo.firstEndEventSeen = true;
+                      activeCallTimers.set(callId, timerInfo);
+                      foundTimer = true;
+                      break;
+                    }
+
+                    // Try to verify this is the right call
+                    try {
+                      const participantDetails = await getParticipantDetails(entity);
+
+                      if (participantDetails && participantDetails.callid === parseInt(callId)) {
+                        console.log(`✅ Verified call ${callId} is ending`);
+                        endCallTimer(callId, timerInfo.userExtension);
+
+                        // Send call end notification
+                        broadcastToUser(timerInfo.userExtension, {
+                          type: 'call_ended',
+                          timestamp: new Date().toISOString(),
+                          userExtension: timerInfo.userExtension,
+                          entity: entity,
+                          callId: callId
+                        });
+
+                        foundTimer = true;
+                        break;
+                      }
+                    } catch (error) {
+                      // If we can't get participant details but enough time has passed
+                      if (timerInfo.userExtension === entityUserExtension && timeSinceStart > 5000) {
+                        console.log(`⚠️ Cannot verify call details, but ending timer after ${timeSinceStart}ms`);
+                        endCallTimer(callId, timerInfo.userExtension);
+
+                        // Send call end notification
+                        broadcastToUser(timerInfo.userExtension, {
+                          type: 'call_ended',
+                          timestamp: new Date().toISOString(),
+                          userExtension: timerInfo.userExtension,
+                          entity: entity,
+                          callId: callId
+                        });
+
+                        foundTimer = true;
+                        break;
+                      } else {
+                        console.log(`⏭️ Skipping end event - cannot verify and too soon (${timeSinceStart}ms)`);
+                      }
+                    }
+                  }
+                }
+
+                // If no timer was found but it's for our tracked extensions, still send notification
+                // BUT only if this isn't immediately after a connection
+                if (!foundTimer) {
+                  const targetExtensions = ['3000']; // Add all your user extensions here
+
+                  if (targetExtensions.includes(entityUserExtension)) {
+                    console.log(`📢 Sending call end notification for ${entityUserExtension} (no active timer)`);
+                    broadcastToUser(entityUserExtension, {
+                      type: 'call_ended',
+                      timestamp: new Date().toISOString(),
+                      userExtension: entityUserExtension,
+                      entity: entity,
+                      callId: 'unknown'
+                    });
+                  }
+                }
+
+                return; // Exit early for end events
+              }
+
+              // ============= FOR OTHER EVENTS, FETCH PARTICIPANT DETAILS =============
+              const participantDetails = await getParticipantDetails(entity);
+
+              if (!participantDetails) {
+                console.log(`⚠️ Could not get participant details for entity: ${entity}`);
                 return;
               }
-              
-              // CHECK FOR RINGING (event_type: 0)
-              if (message.event.event_type === 0) {
-                const participantDetails = await getParticipantDetails(entity);
-                
-                if (participantDetails) {
-                  const callId = participantDetails.callid;
-                  const callKey = `${userExtension}-${callId}`; // ✅ Per-user deduplication
-                  
-                  // Check if we've already processed this call for this user
-                  if (processedCalls.has(callKey)) {
-                    console.log(`⏭️ Skipping duplicate call ${callId} for extension ${userExtension} (already processed for this user)`);
+
+              const callId = participantDetails.callid;
+
+              // ============= CHECK FOR CONNECTED STATUS TO START TIMER =============
+              if (participantDetails.status === "Connected") {
+                // Check if this is our user or check party_dn for our user
+                const targetExtensions = ['3000']; // Add all your user extensions here
+
+                let shouldStartTimer = false;
+                let timerUserExtension = null;
+
+                // Check if direct user connection
+                if (targetExtensions.includes(entityUserExtension)) {
+                  shouldStartTimer = true;
+                  timerUserExtension = entityUserExtension;
+                  console.log(`✅ Direct connection detected for user ${entityUserExtension}`);
+                }
+                // Check if party_dn contains our user (trunk scenario)
+                else if (participantDetails.party_dn && targetExtensions.includes(participantDetails.party_dn)) {
+                  shouldStartTimer = true;
+                  timerUserExtension = participantDetails.party_dn;
+                  console.log(`✅ Trunk connection detected for user ${participantDetails.party_dn} via ${entityUserExtension}`);
+                }
+
+                if (shouldStartTimer && timerUserExtension) {
+                  // Check if timer already exists for this call
+                  if (activeCallTimers.has(callId)) {
+                    console.log(`⏱️ Timer already running for call ${callId}`);
                     return;
                   }
-                  
-                  // Mark this call as processed for this user
-                  processedCalls.set(callKey, Date.now());
-                  
-                  const callReceiveTime = Date.now();
-                  console.log(`\n${'='.repeat(70)}`);
-                  console.log(`📞 INCOMING CALL DETECTED`);
-                  console.log(`${'='.repeat(70)}`);
-                  console.log(`👤 Extension: ${userExtension}`);
-                  console.log(`📞 Call ID: ${callId}`);
-                  console.log(`⏰ Timestamp: ${new Date().toISOString()}`);
-                  
-                  const pbxFetchTime = Date.now();
-                  const pbxDuration = ((pbxFetchTime - callReceiveTime) / 1000).toFixed(3);
-                  
-                  const callerNumber = participantDetails.party_caller_id;
-                  
-                  console.log(`\n📋 3CX CALL DETAILS RECEIVED (${pbxDuration}s):`);
-                  console.log(`   Caller Name: ${participantDetails.party_caller_name}`);
-                  console.log(`   Caller Number: ${callerNumber}`);
-                  console.log(`   Status: ${participantDetails.status}`);
-                  console.log(`   Call ID: ${participantDetails.callid}`);
-                  
-                  let vinPhoneNumber;
-                  if (PRODUCTION_MODE) {
-                    vinPhoneNumber = extractPhoneDigits(callerNumber);
-                    console.log(`✅ PRODUCTION MODE: Using actual number: ${vinPhoneNumber}`);
-                  } else {
-                    vinPhoneNumber = TEST_PHONE_NUMBER;
-                    console.log(`🧪 TESTING MODE: Using test number: ${vinPhoneNumber}`);
-                  }
-                  
-                  const callInfo = {
-                    callerName: participantDetails.party_caller_name,
-                    callerNumber: participantDetails.party_caller_id,
-                    extension: participantDetails.dn,
-                    status: participantDetails.status,
-                    partyDnType: participantDetails.party_dn_type,
-                    callId: participantDetails.callid,
-                    timestamp: new Date().toISOString(),
-                    userExtension: userExtension
-                  };
-                  
-                  // STAGE 1: Send immediate notification with phone number only
-                  console.log(`\n📤 STAGE 1: Sending immediate phone number...`);
-                  sendProgressiveUpdate(userExtension, 1, {
-                    phoneNumber: vinPhoneNumber
-                  }, callInfo);
-                  
-                  // Check cache first
-                  const cachedData = getCachedCustomerData(vinPhoneNumber);
-                  
-                  if (cachedData) {
-                    // Send cached data immediately as complete
-                    console.log(`🎯 Using cached data - sending as complete`);
-                    sendProgressiveUpdate(userExtension, 4, cachedData, callInfo);
-                    
-                    // ALSO send in legacy format for backward compatibility
-                    const legacyNotification = {
-                      type: 'call_notification',
-                      data: {
-                        ...callInfo,
-                        customerData: cachedData
-                      }
-                    };
-                    broadcastToUser(userExtension, legacyNotification);
-                    console.log(`📤 Legacy format sent to ${userExtension}`);
-                    
-                    // **Save cached call to MongoDB - ONE entry per call**
-                    if (!savedCalls.has(callId)) {
-                      try {
-                        savedCalls.set(callId, Date.now());
-                        const uniqueId = `${callId}-${Date.now()}`;
-                        await saveCallData({
-                          _id: uniqueId,
-                          userExtension: userExtension,
-                          callId: callInfo.callId,
-                          callerName: callInfo.callerName,
-                          callerNumber: callInfo.callerNumber,
-                          extension: callInfo.extension,
-                          status: callInfo.status,
-                          timestamp: callInfo.timestamp,
-                          customerData: cachedData,
-                          phoneNumber: vinPhoneNumber,
-                          fromCache: true
-                        });
-                        console.log('💾 Cached call data saved to database');
-                      } catch (dbError) {
-                        console.error('❌ Failed to save cached call data:', dbError);
-                      }
-                    } else {
-                      console.log(`⏭️ Skipping DB save - call ${callId} already saved (cached)`);
-                    }
-                  } else {
-                    // Start progressive fetch
-                    console.log(`🔄 Starting progressive data fetch...`);
-                    await fetchCustomerDataProgressive(vinPhoneNumber, userExtension, callInfo);
-                  }
-                  
-                  const totalCallHandlingTime = ((Date.now() - callReceiveTime) / 1000).toFixed(2);
-                  console.log(`\n⏱️ Total call handling time: ${totalCallHandlingTime}s`);
-                  console.log(`${'='.repeat(70)}\n`);
+
+                  const startTime = Date.now();
+                  activeCallTimers.set(callId, {
+                    startTime: startTime,
+                    userExtension: timerUserExtension,
+                    status: 'active',
+                    requireSecondEndEvent: false, // We'll rely on time-based filtering instead
+                    firstEndEventSeen: false
+                  });
+
+                  console.log(`⏱️ CALL TIMER STARTED - Call ID: ${callId}, User: ${timerUserExtension}`);
+
+                  // Send timer started notification
+                  broadcastToUser(timerUserExtension, {
+                    type: 'call_timer_started',
+                    callId: callId,
+                    startTime: startTime,
+                    timestamp: new Date().toISOString()
+                  });
                 }
+              }
+
+              // ============= CHECK FOR RINGING (event_type: 0) =============
+              if (message.event.event_type === 0 && participantDetails.status === "Ringing") {
+                const callKey = `${entityUserExtension}-${callId}`;
+
+                // Check if we've already processed this call for this user
+                if (processedCalls.has(callKey)) {
+                  console.log(`⏭️ Skipping duplicate call ${callId} for extension ${entityUserExtension}`);
+                  return;
+                }
+
+                // Mark this call as processed for this user
+                processedCalls.set(callKey, Date.now());
+
+                const callReceiveTime = Date.now();
+                console.log(`\n${'='.repeat(70)}`);
+                console.log(`📞 INCOMING CALL DETECTED`);
+                console.log(`${'='.repeat(70)}`);
+                console.log(`👤 Extension: ${entityUserExtension}`);
+                console.log(`📞 Call ID: ${callId}`);
+                console.log(`⏰ Timestamp: ${new Date().toISOString()}`);
+
+                const pbxFetchTime = Date.now();
+                const pbxDuration = ((pbxFetchTime - callReceiveTime) / 1000).toFixed(3);
+
+                const callerNumber = participantDetails.party_caller_id;
+
+                console.log(`\n📋 3CX CALL DETAILS RECEIVED (${pbxDuration}s):`);
+                console.log(`   Caller Name: ${participantDetails.party_caller_name}`);
+                console.log(`   Caller Number: ${callerNumber}`);
+                console.log(`   Status: ${participantDetails.status}`);
+                console.log(`   Call ID: ${participantDetails.callid}`);
+
+                let vinPhoneNumber;
+                if (PRODUCTION_MODE) {
+                  vinPhoneNumber = extractPhoneDigits(callerNumber);
+                  console.log(`✅ PRODUCTION MODE: Using actual number: ${vinPhoneNumber}`);
+                } else {
+                  vinPhoneNumber = TEST_PHONE_NUMBER;
+                  console.log(`🧪 TESTING MODE: Using test number: ${vinPhoneNumber}`);
+                }
+
+                const callInfo = {
+                  callerName: participantDetails.party_caller_name,
+                  callerNumber: participantDetails.party_caller_id,
+                  extension: participantDetails.dn,
+                  status: participantDetails.status,
+                  partyDnType: participantDetails.party_dn_type,
+                  callId: participantDetails.callid,
+                  timestamp: new Date().toISOString(),
+                  userExtension: entityUserExtension
+                };
+
+                // STAGE 1: Send immediate notification with phone number only
+                console.log(`\n📤 STAGE 1: Sending immediate phone number...`);
+                sendProgressiveUpdate(entityUserExtension, 1, {
+                  phoneNumber: vinPhoneNumber
+                }, callInfo);
+
+                // Check cache first
+                const cachedData = getCachedCustomerData(vinPhoneNumber);
+
+                if (cachedData) {
+                  // Send cached data immediately as complete
+                  console.log(`🎯 Using cached data - sending as complete`);
+                  sendProgressiveUpdate(entityUserExtension, 4, cachedData, callInfo);
+
+                  // ALSO send in legacy format for backward compatibility
+                  const legacyNotification = {
+                    type: 'call_notification',
+                    data: {
+                      ...callInfo,
+                      customerData: cachedData
+                    }
+                  };
+                  broadcastToUser(entityUserExtension, legacyNotification);
+                  console.log(`📤 Legacy format sent to ${entityUserExtension}`);
+
+                  // Save cached call to MongoDB
+                  if (!savedCalls.has(callId)) {
+                    try {
+                      savedCalls.set(callId, Date.now());
+                      const uniqueId = `${callId}-${Date.now()}`;
+                      await saveCallData({
+                        _id: uniqueId,
+                        userExtension: entityUserExtension,
+                        callId: callInfo.callId,
+                        callerName: callInfo.callerName,
+                        callerNumber: callInfo.callerNumber,
+                        extension: callInfo.extension,
+                        status: callInfo.status,
+                        timestamp: callInfo.timestamp,
+                        customerData: cachedData,
+                        phoneNumber: vinPhoneNumber,
+                        fromCache: true
+                      });
+                      console.log('💾 Cached call data saved to database');
+                    } catch (dbError) {
+                      console.error('❌ Failed to save cached call data:', dbError);
+                    }
+                  }
+                } else {
+                  // Start progressive fetch
+                  console.log(`🔄 Starting progressive data fetch...`);
+                  await fetchCustomerDataProgressive(vinPhoneNumber, entityUserExtension, callInfo);
+                }
+
+                const totalCallHandlingTime = ((Date.now() - callReceiveTime) / 1000).toFixed(2);
+                console.log(`\n⏱️ Total call handling time: ${totalCallHandlingTime}s`);
+                console.log(`${'='.repeat(70)}\n`);
               }
             }
           }
@@ -1038,15 +1255,17 @@ async function connectTo3CXWebSocket() {
     pbxWebSocket.on('close', (code, reason) => {
       console.log(`❌ 3CX WebSocket closed (${code}: ${reason}). Reconnecting...`);
       isConnectingToPBX = false;
-      
+
       if (pbxPingInterval) {
         clearInterval(pbxPingInterval);
         pbxPingInterval = null;
       }
 
-      const delay = Math.min(5000 * Math.pow(1.5, pbxReconnectAttempts), 30000);
+      const delay = Math.min(PBX_RECONNECT_BASE_DELAY * Math.pow(1.5, pbxReconnectAttempts), PBX_RECONNECT_MAX_DELAY);
       pbxReconnectAttempts++;
-      
+
+      console.log(`🔄 Attempting reconnection in ${delay}ms (attempt ${pbxReconnectAttempts})...`);
+
       setTimeout(() => {
         connectTo3CXWebSocket();
       }, delay);
@@ -1055,14 +1274,20 @@ async function connectTo3CXWebSocket() {
   } catch (error) {
     console.error('❌ Error connecting to 3CX:', error.message);
     isConnectingToPBX = false;
-    setTimeout(connectTo3CXWebSocket, 5000);
+
+    const delay = Math.min(PBX_RECONNECT_BASE_DELAY * Math.pow(1.5, pbxReconnectAttempts), PBX_RECONNECT_MAX_DELAY);
+    pbxReconnectAttempts++;
+
+    setTimeout(() => {
+      connectTo3CXWebSocket();
+    }, delay);
   }
 }
 
 function broadcastToUser(username, message) {
   let sentCount = 0;
   const deadClients = [];
-  
+
   connectedClients.forEach((clientInfo, client) => {
     if (clientInfo.username === username) {
       if (client.readyState === WebSocket.OPEN) {
@@ -1078,9 +1303,9 @@ function broadcastToUser(username, message) {
       }
     }
   });
-  
+
   deadClients.forEach(client => connectedClients.delete(client));
-  
+
   if (sentCount === 0) {
     console.warn(`⚠️ No active clients for user ${username}`);
   }
@@ -1100,7 +1325,7 @@ const heartbeatInterval = setInterval(() => {
       connectedClients.delete(ws);
       return ws.terminate();
     }
-    
+
     ws.isAlive = false;
     ws.ping();
   });
@@ -1108,18 +1333,18 @@ const heartbeatInterval = setInterval(() => {
 
 wss.on('connection', (ws) => {
   console.log('🔌 Client connected');
-  
+
   ws.isAlive = true;
   ws.on('pong', heartbeat);
-  
-  connectedClients.set(ws, { 
-    authenticated: false, 
-    username: null, 
-    connectedAt: Date.now() 
+
+  connectedClients.set(ws, {
+    authenticated: false,
+    username: null,
+    connectedAt: Date.now()
   });
 
-  ws.send(JSON.stringify({ 
-    type: 'connected', 
+  ws.send(JSON.stringify({
+    type: 'connected',
     message: 'Connected to call notification service',
     serverTime: new Date().toISOString()
   }));
@@ -1127,24 +1352,24 @@ wss.on('connection', (ws) => {
   ws.on('message', (data) => {
     try {
       const message = JSON.parse(data.toString());
-      
+
       if (message.type === 'authenticate') {
         const username = message.username;
-        connectedClients.set(ws, { 
-          authenticated: true, 
+        connectedClients.set(ws, {
+          authenticated: true,
           username: username,
           connectedAt: Date.now()
         });
         console.log(`✅ User ${username} authenticated`);
-        
-        ws.send(JSON.stringify({ 
-          type: 'authenticated', 
+
+        ws.send(JSON.stringify({
+          type: 'authenticated',
           message: 'Authentication successful',
           username: username,
           serverTime: new Date().toISOString()
         }));
       } else if (message.type === 'ping') {
-        ws.send(JSON.stringify({ 
+        ws.send(JSON.stringify({
           type: 'pong',
           serverTime: new Date().toISOString()
         }));
@@ -1169,6 +1394,7 @@ wss.on('connection', (ws) => {
 wss.on('close', () => {
   clearInterval(heartbeatInterval);
   if (pbxPingInterval) clearInterval(pbxPingInterval);
+  if (tokenRefreshInterval) clearInterval(tokenRefreshInterval);
 });
 
 app.get('/health', (req, res) => {
@@ -1187,8 +1413,8 @@ app.get('/health', (req, res) => {
 
   const cacheStats = getCacheStats();
 
-  res.json({ 
-    status: 'ok', 
+  res.json({
+    status: 'ok',
     pbxConnected: pbxWebSocket && pbxWebSocket.readyState === WebSocket.OPEN,
     connectedClients: connectedClients.size,
     clientStats: clientStats,
@@ -1196,6 +1422,7 @@ app.get('/health', (req, res) => {
     tokenValid: accessToken && Date.now() < tokenExpiryTime,
     uptime: process.uptime(),
     pbxReconnectAttempts: pbxReconnectAttempts,
+    activeCallTimers: activeCallTimers.size,
     cache: {
       customerDataCache: cacheStats.totalCached,
       hotCache: cacheStats.hotCached,
@@ -1212,22 +1439,25 @@ server.listen(PORT, '0.0.0.0', async () => {
   console.log(`🚀 3CX + VinSolutions Integration Server`);
   console.log(`${'='.repeat(60)}`);
   console.log(`Server running on port ${PORT}`);
-  
+
   if (PRODUCTION_MODE) {
     console.log(`✅ MODE: PRODUCTION (using real phone numbers)`);
   } else {
     console.log(`🧪 MODE: TESTING (using test number: ${TEST_PHONE_NUMBER})`);
   }
-  
+
   console.log(`\n📊 CACHE CONFIGURATION:`);
   console.log(`   - Customer Data Cache: ${CUSTOMER_DATA_CACHE_DURATION / 1000 / 60} minutes`);
   console.log(`   - Hot Cache (Pre-fetch): ${HOT_CACHE_DURATION / 1000} seconds`);
   console.log(`\n📡 PROGRESSIVE LOADING: Enabled (4 stages)`);
-  
+  console.log(`\n⏱️ CALL TIMER: Based on 'Connected' status`);
+  console.log(`\n🔄 TOKEN REFRESH: Every ${TOKEN_REFRESH_INTERVAL / 1000} seconds`);
+
   console.log(`${'='.repeat(60)}\n`);
-  
+
   try {
     await getAccessToken();
+    startTokenRefreshInterval(); // Start token refresh interval
     await getVinToken();
     await connectDB();
     await connectTo3CXWebSocket();
@@ -1241,6 +1471,7 @@ process.on('SIGTERM', async () => {
   console.log('SIGTERM received, closing server...');
   clearInterval(heartbeatInterval);
   if (pbxPingInterval) clearInterval(pbxPingInterval);
+  if (tokenRefreshInterval) clearInterval(tokenRefreshInterval);
   await closeDB();
   server.close(() => {
     console.log('Server closed');
@@ -1252,6 +1483,7 @@ process.on('SIGINT', async () => {
   console.log('SIGINT received, closing server...');
   clearInterval(heartbeatInterval);
   if (pbxPingInterval) clearInterval(pbxPingInterval);
+  if (tokenRefreshInterval) clearInterval(tokenRefreshInterval);
   await closeDB();
   server.close(() => {
     console.log('Server closed');

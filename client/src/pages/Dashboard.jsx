@@ -1,5 +1,3 @@
-// client\src\pages\Dashboard.jsx
-
 import React, { useState, useEffect } from 'react';
 import { Clock, X } from 'lucide-react';
 import RoleTabs from '../components/common/RoleTabs';
@@ -8,21 +6,46 @@ import CustomerInfoCard from '../components/common/CustomerInfoCard';
 import ReceptionistMainCard from '../components/cards/receptionist/ReceptionistMainCard';
 import ProductSpecialistMainCard from '../components/cards/productSpecialist/productSpecialistMain';
 import ServiceAdvisorMainCard from '../components/cards/serviceAdvisor/ServiceAdvisorMainCard';
-import useCallDuration from '../hooks/useCallDuration';
 
-const Dashboard = ({ customerDataProp, fromProp, onClose, loadingStage = 4, isCallActive = true }) => {
+const Dashboard = ({ customerDataProp, fromProp, onClose, loadingStage = 4, isCallActive = true, callStartTime = null }) => {
   const [activeRole, setActiveRole] = useState('receptionist');
   const [customerData, setCustomerData] = useState(customerDataProp);
   const [from] = useState(fromProp);
   const [selectedLeadIndex, setSelectedLeadIndex] = useState(0);
   const [selectedContactIndex, setSelectedContactIndex] = useState(0);
-  const { callDuration } = useCallDuration(isCallActive);
+  const [callDuration, setCallDuration] = useState(0);
 
-  // CRITICAL: Update customerData when prop changes
+  // Update customerData when prop changes
   useEffect(() => {
     console.log('📊 Dashboard received new customerData:', customerDataProp);
     setCustomerData(customerDataProp);
   }, [customerDataProp]);
+
+  // Handle call duration timer based on callStartTime
+  useEffect(() => {
+    let timerInterval = null;
+
+    if (isCallActive && callStartTime) {
+      // Calculate initial duration if call was already in progress
+      const initialDuration = Math.floor((Date.now() - callStartTime) / 1000);
+      setCallDuration(initialDuration);
+
+      // Start interval to update duration every second
+      timerInterval = setInterval(() => {
+        const currentDuration = Math.floor((Date.now() - callStartTime) / 1000);
+        setCallDuration(currentDuration);
+      }, 1000);
+    } else if (!isCallActive) {
+      // Keep the last duration when call ends
+      // Don't reset to 0 immediately
+    }
+
+    return () => {
+      if (timerInterval) {
+        clearInterval(timerInterval);
+      }
+    };
+  }, [isCallActive, callStartTime]);
 
   // Determine loading state based on stage
   const isLoading = loadingStage < 4;
@@ -200,6 +223,42 @@ const Dashboard = ({ customerDataProp, fromProp, onClose, loadingStage = 4, isCa
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
+  const getCallStatusText = () => {
+    if (isCallActive && callStartTime) {
+      return 'CALL CONNECTED';
+    } else if (!isCallActive && callDuration > 0) {
+      return 'CALL ENDED';
+    } else if (isCallActive && !callStartTime) {
+      return 'CALL RINGING';
+    } else {
+      return 'CALL STATUS UNKNOWN';
+    }
+  };
+
+  const getCallStatusColor = () => {
+    if (isCallActive && callStartTime) {
+      return 'text-green-600';
+    } else if (!isCallActive && callDuration > 0) {
+      return 'text-red-600';
+    } else if (isCallActive && !callStartTime) {
+      return 'text-yellow-600';
+    } else {
+      return 'text-gray-600';
+    }
+  };
+
+  const getCallStatusBg = () => {
+    if (isCallActive && callStartTime) {
+      return 'bg-green-500';
+    } else if (!isCallActive && callDuration > 0) {
+      return 'bg-red-500';
+    } else if (isCallActive && !callStartTime) {
+      return 'bg-yellow-500';
+    } else {
+      return 'bg-gray-500';
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gray-50">
       <LoadingStageIndicator />
@@ -217,9 +276,9 @@ const Dashboard = ({ customerDataProp, fromProp, onClose, loadingStage = 4, isCa
       
       <div className="bg-white border-b px-4 py-2 flex items-center justify-between text-sm">
         <div className="flex items-center gap-2">
-          <div className={`w-2 h-2 ${isCallActive ? 'bg-green-500' : 'bg-red-500'} rounded-full ${isCallActive ? 'animate-pulse' : ''}`}></div>
-          <span className={`${isCallActive ? 'text-green-600' : 'text-red-600'} text-sm font-semibold`}>
-            {isCallActive ? 'LIVE CALL' : 'CALL ENDED'}
+          <div className={`w-2 h-2 ${getCallStatusBg()} rounded-full ${isCallActive && callStartTime ? 'animate-pulse' : ''}`}></div>
+          <span className={`${getCallStatusColor()} text-sm font-semibold`}>
+            {getCallStatusText()}
           </span>
           {isLoading && (
             <span className="text-blue-600 text-sm ml-4">
@@ -242,11 +301,17 @@ const Dashboard = ({ customerDataProp, fromProp, onClose, loadingStage = 4, isCa
         {renderRoleContent()}
       </div>
 
-      <div className={`fixed bottom-4 right-4 ${isCallActive ? 'bg-gray-900' : 'bg-red-900'} text-white px-3 py-2 rounded-lg shadow-lg flex items-center gap-2 text-sm transition-colors`}>
-        <Clock className="w-4 h-4" />
-        <span>Call Duration: {formatDuration(callDuration)}</span>
-        {!isCallActive && <span className="ml-2 font-bold">(ENDED)</span>}
-      </div>
+      {/* Call Timer Display */}
+      {(callStartTime || callDuration > 0) && (
+        <div className={`fixed bottom-4 right-4 ${!isCallActive ? 'bg-red-900' : 'bg-gray-900'} text-white px-3 py-2 rounded-lg shadow-lg flex items-center gap-2 text-sm transition-colors`}>
+          <Clock className="w-4 h-4" />
+          <span>
+            {isCallActive && callStartTime ? 'Call Duration: ' : 'Final Duration: '}
+            {formatDuration(callDuration)}
+          </span>
+          {!isCallActive && callDuration > 0 && <span className="ml-2 font-bold">(ENDED)</span>}
+        </div>
+      )}
     </div>
   );
 };

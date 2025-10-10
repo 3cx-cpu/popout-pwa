@@ -1,5 +1,3 @@
-// client\src\App.jsx
-
 import { useState, useEffect, useRef, useCallback } from 'react';
 import './App.css';
 import Dashboard from './pages/Dashboard';
@@ -10,6 +8,8 @@ const RECONNECT_INTERVAL = 3000;
 const MAX_RECONNECT_ATTEMPTS = 10;
 const PING_INTERVAL = 30000;
 const PONG_TIMEOUT = 10000;
+const CONNECTION_TIMEOUT = 5000;
+const VISIBILITY_CHECK_INTERVAL = 1000;
 
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -28,6 +28,8 @@ function App() {
   const [reconnectAttempts, setReconnectAttempts] = useState(0);
   const [loadingStage, setLoadingStage] = useState(0);
   const [isCallActive, setIsCallActive] = useState(false);
+  const [callStartTime, setCallStartTime] = useState(null);
+  const [currentCallId, setCurrentCallId] = useState(null);
 
   const wsRef = useRef(null);
   const audioRef = useRef(null);
@@ -35,6 +37,9 @@ function App() {
   const pingIntervalRef = useRef(null);
   const pongTimeoutRef = useRef(null);
   const isReconnectingRef = useRef(false);
+  const connectionTimeoutRef = useRef(null);
+  const visibilityCheckIntervalRef = useRef(null);
+  const lastVisibilityCheckRef = useRef(Date.now());
 
   // Fetch call history function
   const fetchCallHistory = useCallback(async (usernameParam) => {
@@ -57,6 +62,70 @@ function App() {
       setLoadingHistory(false);
     }
   }, []);
+
+  // Page visibility and WebSocket health check
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        console.log('🔄 Page became visible - checking connection...');
+        if (isAuthenticated && currentUser) {
+          // Check if WebSocket is still connected
+          if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+            console.log('📌 WebSocket disconnected while tab was inactive - reconnecting...');
+            connectWebSocket();
+          }
+        }
+      }
+    };
+
+    const handleOnline = () => {
+      console.log('🌐 Network connection restored');
+      if (isAuthenticated && currentUser) {
+        if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+          connectWebSocket();
+        }
+      }
+    };
+
+    const handleOffline = () => {
+      console.log('📵 Network connection lost');
+      setConnectionStatus('offline');
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    // Regular visibility check to combat idle WebSocket issues
+    visibilityCheckIntervalRef.current = setInterval(() => {
+      if (document.visibilityState === 'visible' && isAuthenticated && currentUser) {
+        const now = Date.now();
+        const timeSinceLastCheck = now - lastVisibilityCheckRef.current;
+        
+        // If more than 60 seconds since last check, verify connection
+        if (timeSinceLastCheck > 60000) {
+          console.log('⏰ Long idle detected - verifying connection...');
+          if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+            // Send a ping to verify connection
+            wsRef.current.send(JSON.stringify({ type: 'ping' }));
+          } else {
+            console.log('📌 Idle connection lost - reconnecting...');
+            connectWebSocket();
+          }
+        }
+        lastVisibilityCheckRef.current = now;
+      }
+    }, VISIBILITY_CHECK_INTERVAL);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+      if (visibilityCheckIntervalRef.current) {
+        clearInterval(visibilityCheckIntervalRef.current);
+      }
+    };
+  }, [isAuthenticated, currentUser]);
 
   useEffect(() => {
     const savedUser = localStorage.getItem('currentUser');
@@ -99,6 +168,11 @@ function App() {
     if (pongTimeoutRef.current) {
       clearTimeout(pongTimeoutRef.current);
       pongTimeoutRef.current = null;
+    }
+
+    if (connectionTimeoutRef.current) {
+      clearTimeout(connectionTimeoutRef.current);
+      connectionTimeoutRef.current = null;
     }
 
     if (wsRef.current) {
@@ -161,6 +235,18 @@ function App() {
 
     isReconnectingRef.current = true;
 
+    // Clean up any existing connection
+    if (wsRef.current) {
+      wsRef.current.onclose = null;
+      wsRef.current.onerror = null;
+      wsRef.current.onmessage = null;
+      wsRef.current.onopen = null;
+      if (wsRef.current.readyState === WebSocket.OPEN) {
+        wsRef.current.close();
+      }
+      wsRef.current = null;
+    }
+
     try {
       const wsUrl = window.location.hostname === 'localhost'
         ? 'ws://localhost:7080'
@@ -172,8 +258,24 @@ function App() {
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 
+      // Set connection timeout
+      connectionTimeoutRef.current = setTimeout(() => {
+        if (ws.readyState === WebSocket.CONNECTING) {
+          console.error('⏱️ Connection timeout');
+          ws.close();
+          setConnectionStatus('timeout');
+        }
+      }, CONNECTION_TIMEOUT);
+
       ws.onopen = () => {
         console.log('✅ WebSocket connected successfully');
+        
+        // Clear connection timeout
+        if (connectionTimeoutRef.current) {
+          clearTimeout(connectionTimeoutRef.current);
+          connectionTimeoutRef.current = null;
+        }
+        
         setConnectionStatus('connected');
         setReconnectAttempts(0);
         isReconnectingRef.current = false;
@@ -201,21 +303,100 @@ function App() {
             return;
           }
 
-          // Handle call end
-          if (message.type === 'call_ended') {
-            console.log('📞 Call ended notification received');
+          // Handle call timer started
+          if (message.type === 'call_timer_started') {
+            console.log('⏱️ Call timer started notification received');
+            const { callId, startTime } = message;
+            setCallStartTime(startTime);
+            setCurrentCallId(callId);
+            setIsCallActive(true);
+            
+            // Update the call in currentCalls with timer info
+            setCurrentCalls(prevCalls => {
+              return prevCalls.map(call => {
+                if (call.callId === callId) {
+                  return {
+                    ...call,
+                    timerStarted: true,
+                    startTime: startTime
+                  };
+                }
+                return call;
+              });
+            });
+            return;
+          }
+
+          // Handle call timer ended
+          if (message.type === 'call_timer_ended') {
+            console.log('⏱️ Call timer ended notification received');
+            const { callId, duration } = message;
+            
             setIsCallActive(false);
+            setCallStartTime(null);
+            
+            // Update the call with final duration
+            setCurrentCalls(prevCalls => {
+              return prevCalls.map(call => {
+                if (call.callId === callId) {
+                  return {
+                    ...call,
+                    timerStarted: false,
+                    callDuration: duration,
+                    callEnded: true
+                  };
+                }
+                return call;
+              });
+            });
+            
+            // Delay closing popup to show final duration
             setTimeout(() => {
-              if (!showCustomerPopup) return;
-              setShowCustomerPopup(false);
-              setCustomerData(null);
-              setCallInfo(null);
-              setLoadingStage(0);
+              if (currentCallId === callId && showCustomerPopup) {
+                setShowCustomerPopup(false);
+                setCustomerData(null);
+                setCallInfo(null);
+                setLoadingStage(0);
+                setCurrentCallId(null);
+              }
             }, 5000);
             return;
           }
 
-          // ✅ HANDLE PROGRESSIVE UPDATES WITH DEDUPLICATION
+          // Handle call end
+          if (message.type === 'call_ended') {
+            console.log('📞 Call ended notification received');
+            const { callId } = message;
+            
+            setIsCallActive(false);
+            
+            // If no timer was started (call wasn't answered), still mark as ended
+            setCurrentCalls(prevCalls => {
+              return prevCalls.map(call => {
+                if (call.callId === callId) {
+                  return {
+                    ...call,
+                    callEnded: true,
+                    status: 'Ended'
+                  };
+                }
+                return call;
+              });
+            });
+            
+            setTimeout(() => {
+              if (currentCallId === callId && showCustomerPopup) {
+                setShowCustomerPopup(false);
+                setCustomerData(null);
+                setCallInfo(null);
+                setLoadingStage(0);
+                setCurrentCallId(null);
+              }
+            }, 5000);
+            return;
+          }
+
+          // HANDLE PROGRESSIVE UPDATES WITH DEDUPLICATION
           if (message.type === 'progressive_update') {
             console.log('🔄 Processing progressive update, stage:', message.stage);
             const callId = message.callInfo?.callId;
@@ -225,12 +406,12 @@ function App() {
               return;
             }
 
-            // ✅ UPDATE CALL IN STATE
+            // UPDATE CALL IN STATE
             setCurrentCalls(prevCalls => {
               const existingCallIndex = prevCalls.findIndex(call => call.callId === callId);
               
               if (existingCallIndex !== -1) {
-                // ✅ UPDATE EXISTING CALL
+                // UPDATE EXISTING CALL
                 console.log(`🔄 Updating existing call ${callId} at stage ${message.stage}`);
                 const updatedCalls = [...prevCalls];
                 const existingCall = updatedCalls[existingCallIndex];
@@ -261,7 +442,7 @@ function App() {
                 
                 return updatedCalls;
               } else {
-                // ✅ CREATE NEW CALL (ONLY ON STAGE 1)
+                // CREATE NEW CALL (ONLY ON STAGE 1)
                 if (message.stage === 1) {
                   console.log('🆕 Creating new call entry for:', callId);
                   const newCall = {
@@ -276,7 +457,9 @@ function App() {
                     customerData: null,
                     fullyLoaded: false,
                     loadingStage: 1,
-                    lastUpdate: new Date().toISOString()
+                    lastUpdate: new Date().toISOString(),
+                    timerStarted: false,
+                    callEnded: false
                   };
                   
                   return [newCall, ...prevCalls];
@@ -287,7 +470,7 @@ function App() {
               }
             });
 
-            // ✅ UPDATE POPUP STATES SEPARATELY (outside setCurrentCalls)
+            // UPDATE POPUP STATES SEPARATELY
             setCurrentCalls(prevCalls => {
               const call = prevCalls.find(c => c.callId === callId);
               
@@ -295,7 +478,7 @@ function App() {
                 // Update popup if it's showing or if it's a new call (stage 1)
                 if (message.stage === 1) {
                   // New call - show popup
-                  setIsCallActive(true);
+                  setCurrentCallId(callId);
                   setShowCustomerPopup(true);
                   setCallInfo({
                     callId: callId,
@@ -335,33 +518,16 @@ function App() {
                 }
               }
               
-              return prevCalls; // Return unchanged
+              return prevCalls;
             });
 
-            // Log the stage
             console.log(`\n${'='.repeat(60)}`);
             console.log(`📊 Progressive Update - Stage ${message.stage}`);
-            console.log(`📦 Data:`, message.data);
-            console.log(`📞 Call Info:`, message.callInfo);
             console.log(`${'='.repeat(60)}\n`);
 
-            if (message.stage === 1) {
-              console.log('🚀 STAGE 1: Showing popup with phone number');
-            } else if (message.stage === 2) {
-              console.log('📇 STAGE 2: Contact info received', message.data);
-              if (message.data.contact?.fullName) {
-                console.log('✅ Updated caller name:', message.data.contact.fullName);
-              }
-            } else if (message.stage === 3) {
-              console.log('📋 STAGE 3: Lead summaries received, lead count:', message.data.leadCount);
-            } else if (message.stage === 4) {
-              console.log('✅ STAGE 4: Complete data received');
-              console.log('📦 Complete customer data:', message.data);
-              console.log('✅ Customer data fully loaded and popup updated');
-            }
           }
 
-          // ✅ HANDLE LEGACY CALL NOTIFICATIONS (WITH DEDUPLICATION)
+          // HANDLE LEGACY CALL NOTIFICATIONS (WITH DEDUPLICATION)
           else if (message.type === 'call_notification' &&
             message.data.userExtension === currentUser.username) {
             console.log('📞 Processing legacy call notification');
@@ -376,7 +542,7 @@ function App() {
               const existingCall = prevCalls.find(call => call.callId === callId);
               
               if (existingCall) {
-                console.log(`⏭️ Skipping legacy notification - call ${callId} already exists from progressive updates`);
+                console.log(`⏭️ Skipping legacy notification - call ${callId} already exists`);
                 return prevCalls;
               }
               
@@ -392,10 +558,12 @@ function App() {
                 customerData: message.data.customerData,
                 fullyLoaded: true,
                 loadingStage: 4,
-                lastUpdate: new Date().toISOString()
+                lastUpdate: new Date().toISOString(),
+                timerStarted: false,
+                callEnded: false
               };
 
-              setIsCallActive(true);
+              setCurrentCallId(callId);
               setShowCustomerPopup(true);
               setCustomerData(message.data.customerData);
               setCallInfo({
@@ -443,6 +611,11 @@ function App() {
         setConnectionStatus('disconnected');
         isReconnectingRef.current = false;
 
+        if (connectionTimeoutRef.current) {
+          clearTimeout(connectionTimeoutRef.current);
+          connectionTimeoutRef.current = null;
+        }
+
         if (pingIntervalRef.current) {
           clearInterval(pingIntervalRef.current);
           pingIntervalRef.current = null;
@@ -468,7 +641,7 @@ function App() {
       setConnectionStatus('error');
       isReconnectingRef.current = false;
     }
-  }, [currentUser, isAuthenticated, reconnectAttempts, startPingInterval, showCustomerPopup, fetchCallHistory]);
+  }, [currentUser, isAuthenticated, reconnectAttempts, startPingInterval, showCustomerPopup, fetchCallHistory, currentCallId]);
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -516,6 +689,8 @@ function App() {
     setReconnectAttempts(0);
     setLoadingStage(0);
     setIsCallActive(false);
+    setCallStartTime(null);
+    setCurrentCallId(null);
   };
 
   const closeCustomerPopup = () => {
@@ -523,7 +698,7 @@ function App() {
     setCustomerData(null);
     setCallInfo(null);
     setLoadingStage(0);
-    setIsCallActive(false);
+    // Note: Don't reset isCallActive here as call may still be ongoing
   };
 
   const handleCallClick = (call) => {
@@ -535,7 +710,16 @@ function App() {
     });
     setShowCustomerPopup(true);
     setLoadingStage(call.loadingStage || 4);
-    setIsCallActive(false);
+    setCurrentCallId(call.callId);
+    
+    // Set call active state based on call status
+    if (call.timerStarted && !call.callEnded) {
+      setIsCallActive(true);
+      setCallStartTime(call.startTime);
+    } else {
+      setIsCallActive(false);
+      setCallStartTime(null);
+    }
   };
 
   const getStatusColor = () => {
@@ -543,8 +727,10 @@ function App() {
       case 'connected': return 'connected';
       case 'connecting':
       case 'reconnecting': return 'reconnecting';
+      case 'offline': return 'offline';
       case 'error':
       case 'failed':
+      case 'timeout':
       case 'disconnected': return 'disconnected';
       default: return 'disconnected';
     }
@@ -553,6 +739,12 @@ function App() {
   const getStatusText = () => {
     if (connectionStatus === 'reconnecting') {
       return `reconnecting (${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})`;
+    }
+    if (connectionStatus === 'offline') {
+      return 'offline - no internet';
+    }
+    if (connectionStatus === 'timeout') {
+      return 'connection timeout';
     }
     return connectionStatus;
   };
@@ -680,11 +872,22 @@ function App() {
                             <p><strong>Leads:</strong> {call.customerData.leads?.length || 0}</p>
                           </>
                         )}
-                        <p><strong>Status:</strong> <span className="status-badge-small">{call.status}</span></p>
+                        <p><strong>Status:</strong> 
+                          {call.timerStarted && !call.callEnded ? (
+                            <span className="status-badge-small bg-green-100 text-green-700">Active</span>
+                          ) : call.callEnded ? (
+                            <span className="status-badge-small bg-red-100 text-red-700">Ended</span>
+                          ) : (
+                            <span className="status-badge-small">{call.status}</span>
+                          )}
+                        </p>
                         {!call.fullyLoaded && (
                           <span className="text-xs bg-yellow-100 text-yellow-700 px-2 py-1 rounded ml-2">
                             Loading Stage {call.loadingStage}/4
                           </span>
+                        )}
+                        {call.callDuration && (
+                          <p><strong>Duration:</strong> {Math.floor(call.callDuration / 60)}:{(call.callDuration % 60).toString().padStart(2, '0')}</p>
                         )}
                       </div>
                     </div>
@@ -738,6 +941,7 @@ function App() {
           onClose={closeCustomerPopup}
           loadingStage={loadingStage}
           isCallActive={isCallActive}
+          callStartTime={callStartTime}
         />
       )}
     </div>
