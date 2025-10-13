@@ -1,9 +1,11 @@
 // client\src\components\cards\serviceAdvisor\ServiceAdvisorMainCard.jsx
 
-import React from 'react';
+import React, { useState } from 'react';
 import { FileText, Phone, Mail, MapPin, Car, User, Calendar, Wrench } from 'lucide-react';
 
 const ServiceAdvisorMainCard = ({ loading, serviceData }) => {
+  const [custPayStatus, setCustPayStatus] = useState('Invoiced'); // Toggle between 'Invoiced' and 'Open'/'In Progress'
+
   const repairOrder = serviceData?.repairOrder || {
     roNumber: '#RO-252656',
     service: 'Brake Service Complete',
@@ -26,6 +28,33 @@ const ServiceAdvisorMainCard = ({ loading, serviceData }) => {
     total: '$487.50'
   };
 
+  const repairStatusItems = [
+    {
+      title: 'Oil Change & Filter Replacement',
+      partsStatus: 'In Stock',
+      partsStatusColor: 'text-green-600',
+      estimate: '$546.32',
+      status: 'Complete',
+      statusColor: 'bg-[#22c55e]'
+    },
+    {
+      title: 'Brake Pad Replacement (Front)',
+      partsStatus: 'Ordered',
+      partsStatusColor: 'text-orange-500',
+      estimate: '$546.32',
+      status: 'In-Progress',
+      statusColor: 'bg-[#3b82f6]'
+    },
+    {
+      title: 'Diagnostic - Check Engine Light',
+      partsStatus: 'Pending Diagnosis',
+      partsStatusColor: 'text-gray-500',
+      estimate: '$546.32',
+      status: 'In-Progress',
+      statusColor: 'bg-[#3b82f6]'
+    }
+  ];
+
   const vehicle = serviceData?.vehicle || {
     year: '2019',
     make: 'Chevrolet',
@@ -43,8 +72,20 @@ const ServiceAdvisorMainCard = ({ loading, serviceData }) => {
   };
 
   return (
-    <div className="space-y-4">
-      {/* Main Invoice Card */}
+    <div className="max-w-[1280px] mx-auto space-y-4">
+      {/* Testing Toggle Button */}
+      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
+        <div className="flex items-center justify-between">
+          <span className="font-semibold text-gray-700">Test Toggle (custPayStatus):</span>
+          <button
+            onClick={() => setCustPayStatus(custPayStatus === 'Invoiced' ? 'Open' : 'Invoiced')}
+            className="bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded-lg"
+          >
+            Current: {custPayStatus} (Click to toggle)
+          </button>
+        </div>
+      </div>
+
       {/* Main Invoice Card */}
       <div className="bg-[#dde8ff] border-l-4 border-blue-900 p-6 rounded-lg">
         {/* Header Section - directly on light blue background */}
@@ -125,36 +166,72 @@ const ServiceAdvisorMainCard = ({ loading, serviceData }) => {
             </div>
           </div>
 
-          {/* Invoice Breakdown */}
-          <div className="bg-white rounded-lg p-4 shadow-sm border border-gray-200">
-            <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
-              <FileText className="w-4 h-4 text-blue-600" />
-              Invoice Breakdown
-            </h3>
-            <div className="space-y-2">
-              {invoice.items.map((item, index) => (
-                <div key={index} className="flex justify-between text-sm">
-                  <span className="text-gray-700">{item.description}</span>
-                  <span className="font-semibold">{item.amount}</span>
+          {/* Conditional Card: Invoice Breakdown OR Repair Status */}
+          {custPayStatus === 'Invoiced' ? (
+            // Invoice Breakdown (when Invoiced)
+            <div className="bg-white rounded-lg p-4 shadow-sm border border-gray-200">
+              <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
+                <FileText className="w-4 h-4 text-blue-600" />
+                Invoice Breakdown
+              </h3>
+              <div className="space-y-2">
+                {invoice.items.map((item, index) => (
+                  <div key={index} className="flex justify-between text-sm">
+                    <span className="text-gray-700">{item.description}</span>
+                    <span className="font-semibold">{item.amount}</span>
+                  </div>
+                ))}
+                <div className="flex justify-between text-base font-bold pt-2 border-t">
+                  <span>Total Amount Due:</span>
+                  <span>{invoice.total}</span>
                 </div>
-              ))}
-              <div className="flex justify-between text-base font-bold pt-2 border-t">
-                <span>Total Amount Due:</span>
-                <span>{invoice.total}</span>
               </div>
             </div>
-          </div>
+          ) : (
+            // Repair Status (when Open or In Progress) - No background wrapper
+            <div>
+              <h3 className="font-semibold text-gray-900 mb-3">Repair Status</h3>
+              <div className="space-y-3">
+                {repairStatusItems.map((item, index) => (
+                  <div key={index} className="bg-white rounded-lg p-4 shadow-sm border border-gray-200">
+                    <div className="flex items-center justify-between">
+                      <div className="flex-1">
+                        <h4 className="font-semibold text-gray-900 mb-1">{item.title}</h4>
+                        <div className="space-y-1 text-sm">
+                          <div>
+                            <span className="text-gray-600">Parts Status:</span>
+                            <span className={`font-semibold ml-1 ${item.partsStatusColor}`}>
+                              {item.partsStatus}
+                            </span>
+                          </div>
+                          <div>
+                            <span className="text-gray-600">Estimate :</span>
+                            <span className="font-semibold ml-1 text-gray-900">{item.estimate}</span>
+                          </div>
+                        </div>
+                      </div>
+                      <button className={`${item.statusColor} hover:opacity-90 text-white font-medium py-2 px-4 rounded-xl text-sm whitespace-nowrap`}>
+                        {item.status}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
-        {/* Send Payment Link Button */}
-        <div className="flex justify-end mt-6">
-          <button className="bg-white hover:bg-gray-50 text-[#002e85] font-medium py-2 px-4 rounded-lg flex items-center gap-2 text-sm border border-gray-200">
-            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
-            </svg>
-            Send Payment Link
-          </button>
-        </div>
+        {/* Send Payment Link Button - Only show when Invoiced */}
+        {custPayStatus === 'Invoiced' && (
+          <div className="flex justify-end mt-6">
+            <button className="bg-white hover:bg-gray-50 text-[#002e85] font-medium py-2 px-4 rounded-lg flex items-center gap-2 text-sm border border-gray-200">
+              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+              </svg>
+              Send Payment Link
+            </button>
+          </div>
+        )}
       </div>
       {/* Bottom Section Cards */}
 <div className="grid grid-cols-3 gap-4">
