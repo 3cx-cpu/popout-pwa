@@ -3,6 +3,83 @@
 import React, { useState } from 'react';
 import { FileText, Phone, Mail, MapPin, Car, User, Calendar, Wrench } from 'lucide-react';
 
+// Individual Skeleton Components
+const RepairOrderSkeleton = () => (
+  <div className="animate-pulse">
+    <div className="h-4 bg-gray-200 rounded w-1/2 mb-3"></div>
+    <div className="space-y-2">
+      <div className="flex justify-between">
+        <div className="h-3 bg-gray-200 rounded w-24"></div>
+        <div className="h-3 bg-gray-200 rounded w-28"></div>
+      </div>
+      <div className="flex justify-between">
+        <div className="h-3 bg-gray-200 rounded w-20"></div>
+        <div className="h-3 bg-gray-200 rounded w-40"></div>
+      </div>
+      <div className="flex justify-between">
+        <div className="h-3 bg-gray-200 rounded w-20"></div>
+        <div className="h-3 bg-gray-200 rounded w-36"></div>
+      </div>
+      <div className="flex justify-between">
+        <div className="h-3 bg-gray-200 rounded w-24"></div>
+        <div className="h-3 bg-gray-200 rounded w-32"></div>
+      </div>
+    </div>
+  </div>
+);
+
+const CompletionDetailsSkeleton = () => (
+  <div className="animate-pulse">
+    <div className="h-4 bg-gray-200 rounded w-1/2 mb-3"></div>
+    <div className="space-y-2">
+      <div className="flex justify-between">
+        <div className="h-3 bg-gray-200 rounded w-24"></div>
+        <div className="h-3 bg-gray-200 rounded w-32"></div>
+      </div>
+      <div className="flex justify-between">
+        <div className="h-3 bg-gray-200 rounded w-28"></div>
+        <div className="h-3 bg-gray-200 rounded w-32"></div>
+      </div>
+      <div className="flex justify-between">
+        <div className="h-3 bg-gray-200 rounded w-28"></div>
+        <div className="h-3 bg-gray-200 rounded w-20"></div>
+      </div>
+      <div className="flex justify-between">
+        <div className="h-3 bg-gray-200 rounded w-16"></div>
+        <div className="h-6 bg-gray-200 rounded-full w-32"></div>
+      </div>
+    </div>
+  </div>
+);
+
+const InvoiceBreakdownSkeleton = () => (
+  <div className="animate-pulse">
+    <div className="h-4 bg-gray-200 rounded w-1/3 mb-3"></div>
+    <div className="space-y-2">
+      <div className="flex justify-between">
+        <div className="h-3 bg-gray-200 rounded w-48"></div>
+        <div className="h-3 bg-gray-200 rounded w-20"></div>
+      </div>
+      <div className="flex justify-between">
+        <div className="h-3 bg-gray-200 rounded w-16"></div>
+        <div className="h-3 bg-gray-200 rounded w-20"></div>
+      </div>
+      <div className="flex justify-between">
+        <div className="h-3 bg-gray-200 rounded w-28"></div>
+        <div className="h-3 bg-gray-200 rounded w-16"></div>
+      </div>
+      <div className="flex justify-between">
+        <div className="h-3 bg-gray-200 rounded w-24"></div>
+        <div className="h-3 bg-gray-200 rounded w-16"></div>
+      </div>
+      <div className="flex justify-between pt-2 mt-2 border-t border-gray-200">
+        <div className="h-4 bg-gray-200 rounded w-36"></div>
+        <div className="h-4 bg-gray-200 rounded w-20"></div>
+      </div>
+    </div>
+  </div>
+);
+
 const ServiceAdvisorMainCard = ({ loading, serviceData }) => {
   const [custPayStatus, setCustPayStatus] = useState('Invoiced'); // Toggle between 'Invoiced' and 'Open'/'In Progress'
 
@@ -113,56 +190,68 @@ const ServiceAdvisorMainCard = ({ loading, serviceData }) => {
           <div className="grid grid-cols-2 gap-6">
             {/* Repair Order Details */}
             <div className="bg-white rounded-lg p-4 shadow-sm border border-gray-200">
-              <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
-                <FileText className="w-4 h-4 text-blue-600" />
-                Repair Order Details
-              </h3>
-              <div className="space-y-2 text-sm">
-                <div className="flex justify-between">
-                  <span className="text-gray-600">RO Number:</span>
-                  <span className="font-semibold">{repairOrder.roNumber}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-600">Service:</span>
-                  <span className="font-semibold">{repairOrder.service}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-600">Vehicle:</span>
-                  <span className="font-semibold">{repairOrder.vehicle}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-600">Technician:</span>
-                  <span className="font-semibold">{repairOrder.technician}</span>
-                </div>
-              </div>
+              {loading ? (
+                <RepairOrderSkeleton />
+              ) : (
+                <>
+                  <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
+                    <FileText className="w-4 h-4 text-blue-600" />
+                    Repair Order Details
+                  </h3>
+                  <div className="space-y-2 text-sm">
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">RO Number:</span>
+                      <span className="font-semibold">{repairOrder.roNumber}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">Service:</span>
+                      <span className="font-semibold">{repairOrder.service}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">Vehicle:</span>
+                      <span className="font-semibold">{repairOrder.vehicle}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">Technician:</span>
+                      <span className="font-semibold">{repairOrder.technician}</span>
+                    </div>
+                  </div>
+                </>
+              )}
             </div>
 
             {/* Completion & Promise Details */}
             <div className="bg-white rounded-lg p-4 shadow-sm border border-gray-200">
-              <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
-                <Calendar className="w-4 h-4 text-blue-600" />
-                Completion & Promise Details
-              </h3>
-              <div className="space-y-2 text-sm">
-                <div className="flex justify-between">
-                  <span className="text-gray-600">Completed:</span>
-                  <span className="font-semibold">{repairOrder.completed}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-600">Promise Date:</span>
-                  <span className="font-semibold">{repairOrder.promiseDate}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-600">Promise Time:</span>
-                  <span className="font-semibold">{repairOrder.promiseTime}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-600">Status:</span>
-                  <span className="bg-[#002e85] text-white text-xs px-3 py-1.5 rounded-full">
-                    {repairOrder.status}
-                  </span>
-                </div>
-              </div>
+              {loading ? (
+                <CompletionDetailsSkeleton />
+              ) : (
+                <>
+                  <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
+                    <Calendar className="w-4 h-4 text-blue-600" />
+                    Completion & Promise Details
+                  </h3>
+                  <div className="space-y-2 text-sm">
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">Completed:</span>
+                      <span className="font-semibold">{repairOrder.completed}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">Promise Date:</span>
+                      <span className="font-semibold">{repairOrder.promiseDate}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">Promise Time:</span>
+                      <span className="font-semibold">{repairOrder.promiseTime}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">Status:</span>
+                      <span className="bg-[#002e85] text-white text-xs px-3 py-1.5 rounded-full">
+                        {repairOrder.status}
+                      </span>
+                    </div>
+                  </div>
+                </>
+              )}
             </div>
           </div>
 
@@ -170,22 +259,28 @@ const ServiceAdvisorMainCard = ({ loading, serviceData }) => {
           {custPayStatus === 'Invoiced' ? (
             // Invoice Breakdown (when Invoiced)
             <div className="bg-white rounded-lg p-4 shadow-sm border border-gray-200">
-              <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
-                <FileText className="w-4 h-4 text-blue-600" />
-                Invoice Breakdown
-              </h3>
-              <div className="space-y-2">
-                {invoice.items.map((item, index) => (
-                  <div key={index} className="flex justify-between text-sm">
-                    <span className="text-gray-700">{item.description}</span>
-                    <span className="font-semibold">{item.amount}</span>
+              {loading ? (
+                <InvoiceBreakdownSkeleton />
+              ) : (
+                <>
+                  <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
+                    <FileText className="w-4 h-4 text-blue-600" />
+                    Invoice Breakdown
+                  </h3>
+                  <div className="space-y-2">
+                    {invoice.items.map((item, index) => (
+                      <div key={index} className="flex justify-between text-sm">
+                        <span className="text-gray-700">{item.description}</span>
+                        <span className="font-semibold">{item.amount}</span>
+                      </div>
+                    ))}
+                    <div className="flex justify-between text-base font-bold pt-2 border-t">
+                      <span>Total Amount Due:</span>
+                      <span>{invoice.total}</span>
+                    </div>
                   </div>
-                ))}
-                <div className="flex justify-between text-base font-bold pt-2 border-t">
-                  <span>Total Amount Due:</span>
-                  <span>{invoice.total}</span>
-                </div>
-              </div>
+                </>
+              )}
             </div>
           ) : (
             // Repair Status (when Open or In Progress) - No background wrapper
