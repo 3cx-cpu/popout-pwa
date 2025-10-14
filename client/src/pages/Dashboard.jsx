@@ -1,3 +1,5 @@
+// client\src\pages\Dashboard.jsx
+
 import React, { useState, useEffect } from 'react';
 import { Clock, X } from 'lucide-react';
 import RoleTabs from '../components/common/RoleTabs';
