@@ -24,14 +24,14 @@ const TEST_PHONE_NUMBER = '3037517500';
 // ================================================
 
 // ============= CACHE CONFIGURATION =============
-const CUSTOMER_DATA_CACHE_DURATION = 10 * 60 * 1000; // 10 minutes
-const HOT_CACHE_DURATION = 60 * 1000; // 60 seconds for pre-fetched data
-const CALL_CACHE_DURATION = 60000; // 1 minute
+const CUSTOMER_DATA_CACHE_DURATION = 10 * 60 * 1000;
+const HOT_CACHE_DURATION = 60 * 1000;
+const CALL_CACHE_DURATION = 60000;
 // ==============================================
 
 // ============= TOKEN REFRESH CONFIGURATION =============
-const TOKEN_REFRESH_INTERVAL = 50000; // Refresh token every 50 seconds (before 60s expiry)
-const TOKEN_REFRESH_BUFFER = 10000; // 10 second buffer before expiry
+const TOKEN_REFRESH_INTERVAL = 50000;
+const TOKEN_REFRESH_BUFFER = 10000;
 // ========================================================
 
 const VIN_CONFIG = {
@@ -43,6 +43,14 @@ const VIN_CONFIG = {
   dealerId: "22269",
   userId: "1286659"
 };
+
+// ============= TEKION CONFIGURATION =============
+const TEKION_CONFIG = {
+  apiBaseUrl: "https://api.bozarthconnect.com/lookup",
+  apiKey: "6E9ViMUn5O2LBBcFQ5MIxKkzMdsC74c8wwtAeQdh",
+  operatorEmail: "jnegri@edbozarth.com"
+};
+// ================================================
 
 let accessToken = null;
 let tokenExpiryTime = null;
@@ -58,9 +66,9 @@ let tokenRefreshInterval = null;
 // ============= CACHE STORAGE =============
 const customerDataCache = new Map();
 const hotCache = new Map();
-const processedCalls = new Map();  // Per-user tracking
-const savedCalls = new Map();       // Global tracking for DB saves
-const activeCallTimers = new Map(); // Track active call timers by callId
+const processedCalls = new Map();
+const savedCalls = new Map();
+const activeCallTimers = new Map();
 // ========================================
 
 // HEARTBEAT CONFIGURATION
@@ -170,7 +178,6 @@ function extractPhoneDigits(phone) {
 // ============= CALL TIMER MANAGEMENT =============
 
 function startCallTimer(callId, userExtension) {
-  // Check if timer already exists for this call
   if (activeCallTimers.has(callId)) {
     console.log(`⏱️ Timer already running for call ${callId}`);
     return;
@@ -185,7 +192,6 @@ function startCallTimer(callId, userExtension) {
 
   console.log(`⏱️ CALL TIMER STARTED - Call ID: ${callId}, User: ${userExtension}`);
 
-  // Send timer started notification
   broadcastToUser(userExtension, {
     type: 'call_timer_started',
     callId: callId,
@@ -209,7 +215,6 @@ function endCallTimer(callId, userExtension) {
 
   console.log(`⏱️ CALL TIMER ENDED - Call ID: ${callId}, Duration: ${duration}s`);
 
-  // Send timer ended notification with duration
   broadcastToUser(userExtension, {
     type: 'call_timer_ended',
     callId: callId,
@@ -235,7 +240,151 @@ function sendProgressiveUpdate(userExtension, stage, data, callInfo) {
   console.log(`📤 STAGE ${stage} sent to ${userExtension}`);
 }
 
-// ============= VINSOLUTIONS FUNCTIONS (keeping existing) =============
+// ============= TEKION API FUNCTIONS =============
+
+async function getTekionCustomerByPhone(phoneNumber) {
+  try {
+    console.log(`🔍 Fetching Tekion customer by phone: ${phoneNumber}`);
+    
+    const response = await axios.post(
+      TEKION_CONFIG.apiBaseUrl,
+      {
+        phone: phoneNumber,
+        operatorEmail: TEKION_CONFIG.operatorEmail
+      },
+      {
+        headers: {
+          'x-api-key': TEKION_CONFIG.apiKey,
+          'Content-Type': 'application/json'
+        },
+        timeout: 10000
+      }
+    );
+
+    if (response.data && response.data.Tekion && response.data.Tekion.customer) {
+      console.log(`✅ Tekion customer found: ${response.data.Tekion.customer.customerId}`);
+      return response.data.Tekion.customer;
+    }
+
+    console.log(`❌ No Tekion customer found for: ${phoneNumber}`);
+    return null;
+  } catch (error) {
+    console.error('❌ Error fetching Tekion customer:', error.message);
+    return null;
+  }
+}
+
+async function getTekionCustomerDetails(customerId) {
+  try {
+    console.log(`🔍 Fetching Tekion customer details for ID: ${customerId}`);
+    
+    const response = await axios.post(
+      TEKION_CONFIG.apiBaseUrl,
+      {
+        operatorEmail: TEKION_CONFIG.operatorEmail,
+        customer_id: customerId,
+        include: ["deals", "ros"]
+      },
+      {
+        headers: {
+          'x-api-key': TEKION_CONFIG.apiKey,
+          'Content-Type': 'application/json'
+        },
+        timeout: 10000
+      }
+    );
+
+    if (response.data && response.data.Tekion) {
+      console.log(`✅ Tekion customer details retrieved`);
+      return response.data.Tekion;
+    }
+
+    console.log(`❌ No Tekion details found for customer: ${customerId}`);
+    return null;
+  } catch (error) {
+    console.error('❌ Error fetching Tekion customer details:', error.message);
+    return null;
+  }
+}
+
+function processTekionData(tekionDetails) {
+  if (!tekionDetails || !tekionDetails.repair_orders || tekionDetails.repair_orders.length === 0) {
+    return null;
+  }
+
+  const repairOrders = tekionDetails.repair_orders.map(ro => {
+    // Extract all job descriptions
+    const services = ro.jobs ? ro.jobs.map(job => ({
+      jobNo: job.job_no,
+      concernDescription: job.concern_description,
+      status: job.status,
+      completedTime: job.completed_time,
+      payType: job.pay_type,
+      jobPrice: job.job_price,
+      operations: job.operations ? job.operations.map(op => ({
+        techStory: op.tech_story,
+        opcodeDescription: op.opcode_description,
+        laborPrice: op.labor_price,
+        parts: op.parts || []
+      })) : []
+    })) : [];
+
+    return {
+      // RO Basic Info
+      roId: ro.ro_id,
+      roNumber: ro.ro_number,
+      roStatus: ro.ro_status,
+      roCreatedTime: ro.ro_created_time,
+      roClosedTime: ro.ro_closed_time,
+      promiseTime: ro.promise_time,
+      checkinTime: ro.checkin_time,
+      lastInvoicedTime: ro.last_invoiced_time,
+
+      // Vehicle Info
+      vin: ro.vin,
+      year: ro.year,
+      make: ro.make,
+      model: ro.model,
+      trim: ro.trim,
+      odometerIn: ro.odometer_in,
+      odometerOut: ro.odometer_out,
+      bodyType: ro.body_type,
+
+      // Customer Info
+      customerId: ro.customer_id,
+      customerFirstName: ro.customer_first_name || ro.billing_customer_first_name,
+      customerLastName: ro.customer_last_name || ro.billing_customer_last_name,
+      customerMobilePhone: ro.customer_mobile_phone || ro.billing_customer_mobile_phone,
+      customerEmail: ro.customer_email || ro.billing_customer_email,
+      customerAddressLine1: ro.customer_address_line_1 || ro.billing_customer_address_line_1,
+      customerCity: ro.customer_city || ro.billing_customer_city,
+      customerState: ro.customer_state || ro.billing_customer_state,
+      customerPostalCode: ro.customer_postal_code || ro.billing_customer_postal_code,
+
+      // Financial Info
+      cpTotalAmt: ro.cp_total_amt,
+      cpRoLaborTotalAmt: ro.cp_ro_labor_total_amt,
+      cpRoPartsTotalAmt: ro.cp_ro_parts_total_amt,
+      cpTaxAmt: ro.cp_tax_amt,
+      cpTotalDiscountAmt: ro.cp_total_discount_amt,
+      cpRoLaborCostAmt: ro.cp_ro_labor_cost_amt,
+      cpRoPartCostAmt: ro.cp_ro_part_cost_amt,
+
+      // Service Details
+      serviceAdvisorId: ro.service_advisor_id,
+      jobCount: ro.job_count,
+      services: services
+    };
+  });
+
+  return {
+    customerId: tekionDetails.customer,
+    repairOrders: repairOrders,
+    deals: tekionDetails.deals || []
+  };
+}
+
+// ============= VINSOLUTIONS FUNCTIONS =============
 
 async function getVinToken(forceRefresh = false) {
   try {
@@ -528,7 +677,7 @@ async function processLeadsInParallel(leads) {
   return Promise.all(leadPromises);
 }
 
-// ============= PROGRESSIVE DATA FETCHING (keeping existing) =============
+// ============= PROGRESSIVE DATA FETCHING WITH PARALLEL VIN + TEKION =============
 
 async function fetchCustomerDataProgressive(phoneNumber, userExtension, callInfo) {
   const overallStartTime = Date.now();
@@ -537,143 +686,202 @@ async function fetchCustomerDataProgressive(phoneNumber, userExtension, callInfo
   console.log(`${'='.repeat(70)}\n`);
 
   try {
-    // STAGE 2: Fetch Basic Contact Info
+    // STAGE 2: Fetch Basic Contact Info from BOTH VinSolutions and Tekion in PARALLEL
     const stage2Start = Date.now();
-    console.log(`📥 STAGE 2: Fetching basic contact info...`);
-    const contacts = await getContactsByPhone(phoneNumber);
+    console.log(`📥 STAGE 2: Fetching basic contact info from VinSolutions AND Tekion in parallel...`);
+    
+    const [vinContactsResult, tekionCustomerResult] = await Promise.allSettled([
+      getContactsByPhone(phoneNumber),
+      getTekionCustomerByPhone(phoneNumber)
+    ]);
+
+    const contacts = vinContactsResult.status === 'fulfilled' ? vinContactsResult.value : [];
+    const tekionCustomer = tekionCustomerResult.status === 'fulfilled' ? tekionCustomerResult.value : null;
+    
     const stage2Duration = ((Date.now() - stage2Start) / 1000).toFixed(2);
 
-    if (!contacts || contacts.length === 0) {
-      console.log(`❌ No contacts found for: ${phoneNumber} (${stage2Duration}s)`);
+    const hasVinData = contacts && contacts.length > 0;
+    const hasTekionData = tekionCustomer !== null;
+
+    console.log(`✅ STAGE 2 Complete in ${stage2Duration}s:`);
+    console.log(`   - VinSolutions: ${hasVinData ? `Found ${contacts.length} contact(s)` : 'No data'}`);
+    console.log(`   - Tekion: ${hasTekionData ? `Found customer ${tekionCustomer.customerId}` : 'No data'}`);
+
+    if (!hasVinData && !hasTekionData) {
+      console.log(`❌ No data found in either system for: ${phoneNumber}`);
       sendProgressiveUpdate(userExtension, 2, {
-        contact: null,
-        error: 'No contact found'
+        vinContact: null,
+        tekionContact: null,
+        error: 'No contact found in any system'
       }, callInfo);
       return null;
     }
 
-    console.log(`✅ STAGE 2 Complete: Found ${contacts.length} contact(s) in ${stage2Duration}s`);
-
     // Send Stage 2 data immediately
     sendProgressiveUpdate(userExtension, 2, {
-      contact: contacts[0],
-      contacts: contacts,
-      hasMultipleContacts: contacts.length > 1
+      vinContact: hasVinData ? contacts[0] : null,
+      vinContacts: contacts,
+      hasMultipleVinContacts: contacts.length > 1,
+      tekionContact: tekionCustomer,
+      hasVinData: hasVinData,
+      hasTekionData: hasTekionData
     }, callInfo);
 
-    // STAGE 3: Fetch Lead Summaries
+    // STAGE 3: Fetch Lead Summaries from VinSolutions AND Repair Orders from Tekion in PARALLEL
     const stage3Start = Date.now();
-    console.log(`📥 STAGE 3: Fetching lead summaries...`);
+    console.log(`📥 STAGE 3: Fetching lead summaries (Vin) and repair orders (Tekion) in parallel...`);
 
-    const allContactsDataPromises = contacts.map(async (contact) => {
-      const leads = await getLeads(contact.contactId);
-      return { contact, leads, leadCount: leads.length };
-    });
+    const stage3Promises = [];
+    
+    // VinSolutions lead summaries
+    if (hasVinData) {
+      const vinLeadsPromise = Promise.all(contacts.map(async (contact) => {
+        const leads = await getLeads(contact.contactId);
+        return { contact, leads, leadCount: leads.length };
+      }));
+      stage3Promises.push(vinLeadsPromise);
+    } else {
+      stage3Promises.push(Promise.resolve([]));
+    }
 
-    const contactsWithLeads = await Promise.all(allContactsDataPromises);
+    // Tekion repair orders
+    if (hasTekionData && tekionCustomer.customerId) {
+      stage3Promises.push(getTekionCustomerDetails(tekionCustomer.customerId));
+    } else {
+      stage3Promises.push(Promise.resolve(null));
+    }
+
+    const [contactsWithLeads, tekionDetails] = await Promise.all(stage3Promises);
     const stage3Duration = ((Date.now() - stage3Start) / 1000).toFixed(2);
 
-    console.log(`✅ STAGE 3 Complete: Fetched lead summaries in ${stage3Duration}s`);
+    console.log(`✅ STAGE 3 Complete in ${stage3Duration}s`);
+
+    // Process Tekion data
+    const tekionData = processTekionData(tekionDetails);
 
     // Send Stage 3 data
-    const primaryContactLeads = contactsWithLeads[0];
+    const primaryContactLeads = hasVinData && contactsWithLeads.length > 0 ? contactsWithLeads[0] : null;
     sendProgressiveUpdate(userExtension, 3, {
-      contact: contacts[0],
-      contacts: contacts,
-      hasMultipleContacts: contacts.length > 1,
-      leads: primaryContactLeads.leads,
-      leadCount: primaryContactLeads.leadCount,
-      allContactsLeadSummary: contactsWithLeads.map(c => ({
+      vinContact: hasVinData ? contacts[0] : null,
+      vinContacts: contacts,
+      hasMultipleVinContacts: contacts.length > 1,
+      vinLeads: primaryContactLeads?.leads || [],
+      vinLeadCount: primaryContactLeads?.leadCount || 0,
+      allVinContactsLeadSummary: contactsWithLeads.map(c => ({
         contactId: c.contact.contactId,
         fullName: c.contact.fullName,
         leadCount: c.leadCount
-      }))
+      })),
+      tekionContact: tekionCustomer,
+      tekionRepairOrdersCount: tekionData?.repairOrders?.length || 0,
+      tekionDealsCount: tekionData?.deals?.length || 0,
+      hasVinData: hasVinData,
+      hasTekionData: hasTekionData
     }, callInfo);
 
-    // STAGE 4: Fetch Detailed Lead Data (vehicles, sales rep)
+    // STAGE 4: Fetch Detailed Lead Data from VinSolutions (vehicles, sales rep)
+    // Tekion data is already complete from Stage 3
     const stage4Start = Date.now();
-    console.log(`📥 STAGE 4: Fetching detailed lead data...`);
+    console.log(`📥 STAGE 4: Fetching detailed VinSolutions lead data...`);
 
-    const allContactsDetailedData = await Promise.all(
-      contactsWithLeads.map(async ({ contact, leads }) => {
-        let allLeadsData = [];
-        let primarySalesRepInfo = null;
+    let allContactsDetailedData = [];
+    
+    if (hasVinData && contactsWithLeads.length > 0) {
+      allContactsDetailedData = await Promise.all(
+        contactsWithLeads.map(async ({ contact, leads }) => {
+          let allLeadsData = [];
+          let primarySalesRepInfo = null;
 
-        if (leads.length > 0) {
-          allLeadsData = await processLeadsInParallel(leads);
+          if (leads.length > 0) {
+            allLeadsData = await processLeadsInParallel(leads);
 
-          for (const leadData of allLeadsData) {
-            if (leadData.salesRepInfo) {
-              primarySalesRepInfo = leadData.salesRepInfo;
-              break;
+            for (const leadData of allLeadsData) {
+              if (leadData.salesRepInfo) {
+                primarySalesRepInfo = leadData.salesRepInfo;
+                break;
+              }
             }
           }
-        }
 
-        const salesAssignment = await getUserById(VIN_CONFIG.userId);
+          const salesAssignment = await getUserById(VIN_CONFIG.userId);
 
-        const isVehicleComplete = (vehicle) => {
-          return vehicle.make !== null && vehicle.model !== null &&
-            vehicle.make !== '' && vehicle.model !== '';
-        };
+          const isVehicleComplete = (vehicle) => {
+            return vehicle.make !== null && vehicle.model !== null &&
+              vehicle.make !== '' && vehicle.model !== '';
+          };
 
-        const processedLeadsData = allLeadsData.map(lead => {
-          const vehiclesOfInterest = lead.vehiclesOfInterest || [];
-          const tradeVehicles = lead.tradeVehicles || [];
+          const processedLeadsData = allLeadsData.map(lead => {
+            const vehiclesOfInterest = lead.vehiclesOfInterest || [];
+            const tradeVehicles = lead.tradeVehicles || [];
 
-          const validVOI = vehiclesOfInterest.filter(isVehicleComplete);
-          const incompleteVOI = vehiclesOfInterest.filter(v => !isVehicleComplete(v));
+            const validVOI = vehiclesOfInterest.filter(isVehicleComplete);
+            const incompleteVOI = vehiclesOfInterest.filter(v => !isVehicleComplete(v));
 
-          const validTrade = tradeVehicles.filter(isVehicleComplete);
-          const incompleteTrade = tradeVehicles.filter(v => !isVehicleComplete(v));
+            const validTrade = tradeVehicles.filter(isVehicleComplete);
+            const incompleteTrade = tradeVehicles.filter(v => !isVehicleComplete(v));
+
+            return {
+              ...lead,
+              vehiclesOfInterest: validVOI,
+              incompleteVehiclesOfInterest: incompleteVOI,
+              tradeVehicles: validTrade,
+              incompleteTradeVehicles: incompleteTrade
+            };
+          });
+
+          const allValidVOI = processedLeadsData.flatMap(lead => lead.vehiclesOfInterest || []);
+          const allIncompleteVOI = processedLeadsData.flatMap(lead => lead.incompleteVehiclesOfInterest || []);
+          const allValidTrade = processedLeadsData.flatMap(lead => lead.tradeVehicles || []);
+          const allIncompleteTrade = processedLeadsData.flatMap(lead => lead.incompleteTradeVehicles || []);
 
           return {
-            ...lead,
-            vehiclesOfInterest: validVOI,
-            incompleteVehiclesOfInterest: incompleteVOI,
-            tradeVehicles: validTrade,
-            incompleteTradeVehicles: incompleteTrade
+            contact,
+            leads,
+            allLeadsData: processedLeadsData,
+            vehiclesOfInterest: allValidVOI,
+            incompleteVehiclesOfInterest: allIncompleteVOI,
+            tradeVehicles: allValidTrade,
+            incompleteTradeVehicles: allIncompleteTrade,
+            salesAssignment,
+            salesRepInfo: primarySalesRepInfo,
+            leadSource: processedLeadsData[0]?.leadSource || null
           };
-        });
-
-        const allValidVOI = processedLeadsData.flatMap(lead => lead.vehiclesOfInterest || []);
-        const allIncompleteVOI = processedLeadsData.flatMap(lead => lead.incompleteVehiclesOfInterest || []);
-        const allValidTrade = processedLeadsData.flatMap(lead => lead.tradeVehicles || []);
-        const allIncompleteTrade = processedLeadsData.flatMap(lead => lead.incompleteTradeVehicles || []);
-
-        return {
-          contact,
-          leads,
-          allLeadsData: processedLeadsData,
-          vehiclesOfInterest: allValidVOI,
-          incompleteVehiclesOfInterest: allIncompleteVOI,
-          tradeVehicles: allValidTrade,
-          incompleteTradeVehicles: allIncompleteTrade,
-          salesAssignment,
-          salesRepInfo: primarySalesRepInfo,
-          leadSource: processedLeadsData[0]?.leadSource || null
-        };
-      })
-    );
+        })
+      );
+    }
 
     const stage4Duration = ((Date.now() - stage4Start) / 1000).toFixed(2);
     console.log(`✅ STAGE 4 Complete: Detailed lead data in ${stage4Duration}s`);
 
     // Build final complete data structure
     const completeData = {
-      contact: contacts[0],
-      leads: allContactsDetailedData[0]?.leads || [],
-      allLeadsData: allContactsDetailedData[0]?.allLeadsData || [],
-      vehiclesOfInterest: allContactsDetailedData[0]?.vehiclesOfInterest || [],
-      incompleteVehiclesOfInterest: allContactsDetailedData[0]?.incompleteVehiclesOfInterest || [],
-      tradeVehicles: allContactsDetailedData[0]?.tradeVehicles || [],
-      incompleteTradeVehicles: allContactsDetailedData[0]?.incompleteTradeVehicles || [],
-      salesAssignment: allContactsDetailedData[0]?.salesAssignment,
-      salesRepInfo: allContactsDetailedData[0]?.salesRepInfo,
-      leadSource: allContactsDetailedData[0]?.leadSource,
-      contacts,
-      allContactsData: allContactsDetailedData,
-      hasMultipleContacts: contacts.length > 1
+      // VinSolutions Data
+      vinSolutions: hasVinData ? {
+        contact: contacts[0],
+        leads: allContactsDetailedData[0]?.leads || [],
+        allLeadsData: allContactsDetailedData[0]?.allLeadsData || [],
+        vehiclesOfInterest: allContactsDetailedData[0]?.vehiclesOfInterest || [],
+        incompleteVehiclesOfInterest: allContactsDetailedData[0]?.incompleteVehiclesOfInterest || [],
+        tradeVehicles: allContactsDetailedData[0]?.tradeVehicles || [],
+        incompleteTradeVehicles: allContactsDetailedData[0]?.incompleteTradeVehicles || [],
+        salesAssignment: allContactsDetailedData[0]?.salesAssignment,
+        salesRepInfo: allContactsDetailedData[0]?.salesRepInfo,
+        leadSource: allContactsDetailedData[0]?.leadSource,
+        contacts,
+        allContactsData: allContactsDetailedData,
+        hasMultipleContacts: contacts.length > 1
+      } : null,
+
+      // Tekion Data
+      tekion: hasTekionData ? {
+        customer: tekionCustomer,
+        ...tekionData
+      } : null,
+
+      // Metadata
+      hasVinData: hasVinData,
+      hasTekionData: hasTekionData,
+      phoneNumber: phoneNumber
     };
 
     // Send Stage 4 (Complete) data
@@ -693,7 +901,7 @@ async function fetchCustomerDataProgressive(phoneNumber, userExtension, callInfo
     // Cache the complete data
     setCachedCustomerData(phoneNumber, completeData);
 
-    // Save to MongoDB - ONE entry per call (global deduplication)
+    // Save to MongoDB
     const callId = callInfo.callId;
     if (!savedCalls.has(callId)) {
       try {
@@ -722,9 +930,9 @@ async function fetchCustomerDataProgressive(phoneNumber, userExtension, callInfo
     const totalDuration = ((Date.now() - overallStartTime) / 1000).toFixed(2);
     console.log(`\n${'='.repeat(70)}`);
     console.log(`✅ PROGRESSIVE FETCH COMPLETE in ${totalDuration}s`);
-    console.log(`   Stage 2 (Contact):        ${stage2Duration}s`);
-    console.log(`   Stage 3 (Lead Summary):   ${stage3Duration}s`);
-    console.log(`   Stage 4 (Complete Data):  ${stage4Duration}s`);
+    console.log(`   Stage 2 (Contact - Both):    ${stage2Duration}s`);
+    console.log(`   Stage 3 (Summary - Both):    ${stage3Duration}s`);
+    console.log(`   Stage 4 (Complete Data):     ${stage4Duration}s`);
     console.log(`${'='.repeat(70)}\n`);
 
     return completeData;
@@ -780,7 +988,6 @@ app.post('/api/login', async (req, res) => {
 
 // ============= API ENDPOINTS FOR CALL HISTORY =============
 
-// Get call history for a user
 app.get('/api/call-history/:username', async (req, res) => {
   try {
     const { username } = req.params;
@@ -804,7 +1011,6 @@ app.get('/api/call-history/:username', async (req, res) => {
   }
 });
 
-// Get specific call by ID
 app.get('/api/call/:callId', async (req, res) => {
   try {
     const { callId } = req.params;
@@ -862,7 +1068,6 @@ async function ensureValidToken() {
   return accessToken;
 }
 
-// Token refresh mechanism
 function startTokenRefreshInterval() {
   if (tokenRefreshInterval) {
     clearInterval(tokenRefreshInterval);
@@ -950,357 +1155,290 @@ async function connectTo3CXWebSocket() {
       // Connection is alive
     });
 
+    pbxWebSocket.on('message', async (data) => {
+      try {
+        const message = JSON.parse(data.toString());
 
-// Replace the WebSocket message handler in your server.js with this fixed version
-// This goes inside the connectTo3CXWebSocket function
+        if (message.sequence && message.event && message.event.entity) {
+          if (message.sequence > latestSequence) {
+            latestSequence = message.sequence;
 
-// Replace the WebSocket message handler in your server.js with this fixed version
-// This goes inside the connectTo3CXWebSocket function
-
-pbxWebSocket.on('message', async (data) => {
-  try {
-    const message = JSON.parse(data.toString());
-
-    if (message.sequence && message.event && message.event.entity) {
-      if (message.sequence > latestSequence) {
-        latestSequence = message.sequence;
-
-        const entity = message.event.entity;
-        const entityParts = entity.split('/');
-        
-        if (entityParts.length >= 3 && entityParts[1] === 'callcontrol') {
-          const entityUserExtension = entityParts[2];
-          
-          // ============= HANDLE EVENT TYPE 1 (CALL END) FIRST =============
-          if (message.event.event_type === 1) {
-            console.log(`\n${'='.repeat(70)}`);
-            console.log(`📞 CALL END EVENT DETECTED`);
-            console.log(`   Entity: ${entity}`);
-            console.log(`   User Extension from entity: ${entityUserExtension}`);
-            console.log(`${'='.repeat(70)}\n`);
+            const entity = message.event.entity;
+            const entityParts = entity.split('/');
             
-            // Try to get participant details to find the correct callId
-            let callIdToEnd = null;
-            let participantDetails = null;
-            
-            try {
-              participantDetails = await getParticipantDetails(entity);
-              if (participantDetails) {
-                callIdToEnd = participantDetails.callid;
-                console.log(`✅ Got call ID from participant details: ${callIdToEnd}`);
-              }
-            } catch (error) {
-              console.log(`⚠️ Could not get participant details: ${error.message}`);
-            }
-            
-            // Look for the timer to end
-            let timerFound = false;
-            
-            // If we have a specific callId, try to find that timer first
-            if (callIdToEnd && activeCallTimers.has(String(callIdToEnd))) {
-              const timerInfo = activeCallTimers.get(String(callIdToEnd));
-              console.log(`🔍 Found timer for callId ${callIdToEnd}, user ${timerInfo.userExtension}`);
-              console.log(`📊 Timer details: expectingImmediateEnd=${timerInfo.expectingImmediateEnd}, userExtension=${timerInfo.userExtension}, entityUserExtension=${entityUserExtension}`);
+            if (entityParts.length >= 3 && entityParts[1] === 'callcontrol') {
+              const entityUserExtension = entityParts[2];
               
-              // Check if this is the immediate end event we're expecting
-              const timeSinceStart = Date.now() - timerInfo.startTime;
-              
-              // Only ignore if this is for the SAME user extension that started the timer
-              if (timerInfo.expectingImmediateEnd && timerInfo.userExtension === entityUserExtension) {
-                console.log(`⏭️ Ignoring expected immediate event_type:1 for user ${entityUserExtension} - ${timeSinceStart}ms since call connected`);
-                console.log(`📌 This is the automatic end event that comes after connection - ignoring`);
-                timerInfo.expectingImmediateEnd = false; // Clear the flag
-                activeCallTimers.set(String(callIdToEnd), timerInfo);
-                timerFound = true;
-              } else if (!timerInfo.expectingImmediateEnd && (timerInfo.userExtension === entityUserExtension || entityUserExtension === '10001')) {
-                // This is a real end event - only end if flag has been cleared
-                console.log(`✅ Ending timer for call ${callIdToEnd} after ${timeSinceStart}ms (real call end)`);
-                endCallTimer(String(callIdToEnd), timerInfo.userExtension);
+              if (message.event.event_type === 1) {
+                console.log(`\n${'='.repeat(70)}`);
+                console.log(`📞 CALL END EVENT DETECTED`);
+                console.log(`   Entity: ${entity}`);
+                console.log(`   User Extension from entity: ${entityUserExtension}`);
+                console.log(`${'='.repeat(70)}\n`);
                 
-                // Send call end notification
-                broadcastToUser(timerInfo.userExtension, {
-                  type: 'call_ended',
-                  timestamp: new Date().toISOString(),
-                  userExtension: timerInfo.userExtension,
-                  entity: entity,
-                  callId: String(callIdToEnd)
-                });
+                let callIdToEnd = null;
+                let participantDetails = null;
                 
-                timerFound = true;
-              } else {
-                console.log(`⏭️ Skipping end event - conditions not met for ending timer`);
-              }
-            }
-            
-            // If we couldn't find by specific callId, search all timers
-            if (!timerFound) {
-              // Get all currently connected user extensions
-              const targetExtensions = new Set();
-              connectedClients.forEach((clientInfo) => {
-                if (clientInfo.authenticated && clientInfo.username) {
-                  targetExtensions.add(clientInfo.username);
+                try {
+                  participantDetails = await getParticipantDetails(entity);
+                  if (participantDetails) {
+                    callIdToEnd = participantDetails.callid;
+                    console.log(`✅ Got call ID from participant details: ${callIdToEnd}`);
+                  }
+                } catch (error) {
+                  console.log(`⚠️ Could not get participant details: ${error.message}`);
                 }
-              });
-              
-              for (const [callId, timerInfo] of activeCallTimers.entries()) {
-                // Check if this could be the right timer based on extension
-                if ((timerInfo.userExtension === entityUserExtension) || 
-                    (entityUserExtension === '10001' && targetExtensions.has(timerInfo.userExtension))) {
-                  
+                
+                let timerFound = false;
+                
+                if (callIdToEnd && activeCallTimers.has(String(callIdToEnd))) {
+                  const timerInfo = activeCallTimers.get(String(callIdToEnd));
                   const timeSinceStart = Date.now() - timerInfo.startTime;
                   
-                  console.log(`📊 Checking timer: callId=${callId}, userExt=${timerInfo.userExtension}, entityExt=${entityUserExtension}`);
-                  console.log(`📊 Timer flags: expectingImmediateEnd=${timerInfo.expectingImmediateEnd}, timeSinceStart=${timeSinceStart}ms`);
-                  
-                  // Only ignore if this is for the SAME user extension AND flag is set
                   if (timerInfo.expectingImmediateEnd && timerInfo.userExtension === entityUserExtension) {
-                    console.log(`⏭️ Ignoring expected immediate event_type:1 for call ${callId} user ${entityUserExtension} - ${timeSinceStart}ms since connected`);
-                    console.log(`📌 This is the automatic end event that comes after connection - ignoring`);
-                    timerInfo.expectingImmediateEnd = false; // Clear the flag only for matching user
-                    activeCallTimers.set(callId, timerInfo);
+                    console.log(`⏭️ Ignoring expected immediate event_type:1 for user ${entityUserExtension}`);
+                    timerInfo.expectingImmediateEnd = false;
+                    activeCallTimers.set(String(callIdToEnd), timerInfo);
                     timerFound = true;
-                    break;
-                  } else if (!timerInfo.expectingImmediateEnd || timerInfo.userExtension !== entityUserExtension) {
-                    // This is a real end event OR different extension (trunk scenario)
-                    // But we should still check if it's the right call
-                    if (timerInfo.userExtension === entityUserExtension || 
-                        (entityUserExtension === '10001' && !timerInfo.expectingImmediateEnd)) {
-                      console.log(`✅ Ending timer for call ${callId} after ${timeSinceStart}ms (real call end)`);
-                      endCallTimer(callId, timerInfo.userExtension);
+                  } else if (!timerInfo.expectingImmediateEnd && (timerInfo.userExtension === entityUserExtension || entityUserExtension === '10001')) {
+                    console.log(`✅ Ending timer for call ${callIdToEnd} after ${timeSinceStart}ms`);
+                    endCallTimer(String(callIdToEnd), timerInfo.userExtension);
+                    
+                    broadcastToUser(timerInfo.userExtension, {
+                      type: 'call_ended',
+                      timestamp: new Date().toISOString(),
+                      userExtension: timerInfo.userExtension,
+                      entity: entity,
+                      callId: String(callIdToEnd)
+                    });
+                    
+                    timerFound = true;
+                  }
+                }
+                
+                if (!timerFound) {
+                  const targetExtensions = new Set();
+                  connectedClients.forEach((clientInfo) => {
+                    if (clientInfo.authenticated && clientInfo.username) {
+                      targetExtensions.add(clientInfo.username);
+                    }
+                  });
+                  
+                  for (const [callId, timerInfo] of activeCallTimers.entries()) {
+                    if ((timerInfo.userExtension === entityUserExtension) || 
+                        (entityUserExtension === '10001' && targetExtensions.has(timerInfo.userExtension))) {
                       
-                      // Send call end notification
-                      broadcastToUser(timerInfo.userExtension, {
-                        type: 'call_ended',
-                        timestamp: new Date().toISOString(),
-                        userExtension: timerInfo.userExtension,
-                        entity: entity,
-                        callId: callId
-                      });
+                      const timeSinceStart = Date.now() - timerInfo.startTime;
                       
-                      timerFound = true;
-                      break;
-                    } else {
-                      console.log(`⏭️ Skipping end event - wrong extension or still expecting immediate end`);
+                      if (timerInfo.expectingImmediateEnd && timerInfo.userExtension === entityUserExtension) {
+                        console.log(`⏭️ Ignoring expected immediate event_type:1 for call ${callId}`);
+                        timerInfo.expectingImmediateEnd = false;
+                        activeCallTimers.set(callId, timerInfo);
+                        timerFound = true;
+                        break;
+                      } else if (!timerInfo.expectingImmediateEnd || timerInfo.userExtension !== entityUserExtension) {
+                        if (timerInfo.userExtension === entityUserExtension || 
+                            (entityUserExtension === '10001' && !timerInfo.expectingImmediateEnd)) {
+                          console.log(`✅ Ending timer for call ${callId} after ${timeSinceStart}ms`);
+                          endCallTimer(callId, timerInfo.userExtension);
+                          
+                          broadcastToUser(timerInfo.userExtension, {
+                            type: 'call_ended',
+                            timestamp: new Date().toISOString(),
+                            userExtension: timerInfo.userExtension,
+                            entity: entity,
+                            callId: callId
+                          });
+                          
+                          timerFound = true;
+                          break;
+                        }
+                      }
                     }
                   }
                 }
-              }
-            }
-            
-            // Only send "no active timer" message if this is for a connected user
-            if (!timerFound) {
-              const targetExtensions = new Set();
-              connectedClients.forEach((clientInfo) => {
-                if (clientInfo.authenticated && clientInfo.username) {
-                  targetExtensions.add(clientInfo.username);
+                
+                if (!timerFound) {
+                  const targetExtensions = new Set();
+                  connectedClients.forEach((clientInfo) => {
+                    if (clientInfo.authenticated && clientInfo.username) {
+                      targetExtensions.add(clientInfo.username);
+                    }
+                  });
+                  
+                  if (targetExtensions.has(entityUserExtension)) {
+                    broadcastToUser(entityUserExtension, {
+                      type: 'call_ended',
+                      timestamp: new Date().toISOString(),
+                      userExtension: entityUserExtension,
+                      entity: entity,
+                      callId: callIdToEnd || 'unknown'
+                    });
+                  }
                 }
-              });
+                
+                return;
+              }
               
-              if (targetExtensions.has(entityUserExtension)) {
-                console.log(`📢 Sending call end notification for ${entityUserExtension} (no active timer)`);
-                broadcastToUser(entityUserExtension, {
-                  type: 'call_ended',
-                  timestamp: new Date().toISOString(),
-                  userExtension: entityUserExtension,
-                  entity: entity,
-                  callId: callIdToEnd || 'unknown'
-                });
-              }
-            }
-            
-            return; // Exit early for end events
-          }
-          
-          // ============= FOR OTHER EVENTS, FETCH PARTICIPANT DETAILS =============
-          const participantDetails = await getParticipantDetails(entity);
-          
-          if (!participantDetails) {
-            console.log(`⚠️ Could not get participant details for entity: ${entity}`);
-            return;
-          }
-
-          const callId = String(participantDetails.callid); // Always use string for consistency
-          
-          // ============= CHECK FOR CONNECTED STATUS TO START TIMER =============
-          if (participantDetails.status === "Connected") {
-            // Get all currently connected user extensions from connectedClients
-            const targetExtensions = new Set();
-            connectedClients.forEach((clientInfo) => {
-              if (clientInfo.authenticated && clientInfo.username) {
-                targetExtensions.add(clientInfo.username);
-              }
-            });
-            
-            console.log(`🎯 Currently tracking extensions: ${Array.from(targetExtensions).join(', ')}`);
-            
-            let shouldStartTimer = false;
-            let timerUserExtension = null;
-
-            // Check if direct user connection
-            if (targetExtensions.has(entityUserExtension)) {
-              shouldStartTimer = true;
-              timerUserExtension = entityUserExtension;
-              console.log(`✅ Direct connection detected for user ${entityUserExtension}`);
-            }
-            // Check if party_dn contains our user (trunk scenario)
-            else if (participantDetails.party_dn && targetExtensions.has(participantDetails.party_dn)) {
-              shouldStartTimer = true;
-              timerUserExtension = participantDetails.party_dn;
-              console.log(`✅ Trunk connection detected for user ${participantDetails.party_dn} via ${entityUserExtension}`);
-            }
-
-            if (shouldStartTimer && timerUserExtension) {
-              // Check if timer already exists for this call
-              if (activeCallTimers.has(callId)) {
-                const existingTimer = activeCallTimers.get(callId);
-                console.log(`⏱️ Timer already running for call ${callId} - user: ${existingTimer.userExtension}`);
-                // Check if this is a trunk connection for the same call
-                if (entityUserExtension === '10001' && existingTimer.expectingImmediateEnd) {
-                  console.log(`📌 Trunk connection detected - maintaining expectingImmediateEnd flag`);
-                }
+              const participantDetails = await getParticipantDetails(entity);
+              
+              if (!participantDetails) {
+                console.log(`⚠️ Could not get participant details for entity: ${entity}`);
                 return;
               }
 
-              const startTime = Date.now();
-              activeCallTimers.set(callId, {
-                startTime: startTime,
-                userExtension: timerUserExtension,
-                status: 'active',
-                expectingImmediateEnd: true, // Flag to ignore the next end event from same user
-                startedFromEntity: entityUserExtension // Track which entity started this timer
-              });
+              const callId = String(participantDetails.callid);
+              
+              if (participantDetails.status === "Connected") {
+                const targetExtensions = new Set();
+                connectedClients.forEach((clientInfo) => {
+                  if (clientInfo.authenticated && clientInfo.username) {
+                    targetExtensions.add(clientInfo.username);
+                  }
+                });
+                
+                let shouldStartTimer = false;
+                let timerUserExtension = null;
 
-              console.log(`⏱️ CALL TIMER STARTED - Call ID: ${callId}, User: ${timerUserExtension}, Entity: ${entityUserExtension}`);
-              console.log(`📊 Active timers: ${Array.from(activeCallTimers.keys()).join(', ')}`);
-              console.log(`⚠️ Expecting immediate end event for call ${callId} from user ${timerUserExtension} - will ignore first end event from same user`);
-              
-              // Send timer started notification
-              broadcastToUser(timerUserExtension, {
-                type: 'call_timer_started',
-                callId: callId,
-                startTime: startTime,
-                timestamp: new Date().toISOString()
-              });
-            }
-          }
-          
-          // ============= CHECK FOR RINGING (event_type: 0) =============
-          if (message.event.event_type === 0 && participantDetails.status === "Ringing") {
-            const callKey = `${entityUserExtension}-${callId}`;
-            
-            // Check if we've already processed this call for this user
-            if (processedCalls.has(callKey)) {
-              console.log(`⏭️ Skipping duplicate call ${callId} for extension ${entityUserExtension}`);
-              return;
-            }
-            
-            // Mark this call as processed for this user
-            processedCalls.set(callKey, Date.now());
-            
-            const callReceiveTime = Date.now();
-            console.log(`\n${'='.repeat(70)}`);
-            console.log(`📞 INCOMING CALL DETECTED`);
-            console.log(`${'='.repeat(70)}`);
-            console.log(`👤 Extension: ${entityUserExtension}`);
-            console.log(`📞 Call ID: ${callId}`);
-            console.log(`⏰ Timestamp: ${new Date().toISOString()}`);
-            
-            const pbxFetchTime = Date.now();
-            const pbxDuration = ((pbxFetchTime - callReceiveTime) / 1000).toFixed(3);
-            
-            const callerNumber = participantDetails.party_caller_id;
-            
-            console.log(`\n📋 3CX CALL DETAILS RECEIVED (${pbxDuration}s):`);
-            console.log(`   Caller Name: ${participantDetails.party_caller_name}`);
-            console.log(`   Caller Number: ${callerNumber}`);
-            console.log(`   Status: ${participantDetails.status}`);
-            console.log(`   Call ID: ${participantDetails.callid}`);
-            
-            let vinPhoneNumber;
-            if (PRODUCTION_MODE) {
-              vinPhoneNumber = extractPhoneDigits(callerNumber);
-              console.log(`✅ PRODUCTION MODE: Using actual number: ${vinPhoneNumber}`);
-            } else {
-              vinPhoneNumber = TEST_PHONE_NUMBER;
-              console.log(`🧪 TESTING MODE: Using test number: ${vinPhoneNumber}`);
-            }
-            
-            const callInfo = {
-              callerName: participantDetails.party_caller_name,
-              callerNumber: participantDetails.party_caller_id,
-              extension: participantDetails.dn,
-              status: participantDetails.status,
-              partyDnType: participantDetails.party_dn_type,
-              callId: callId, // Use string version
-              timestamp: new Date().toISOString(),
-              userExtension: entityUserExtension
-            };
-            
-            // STAGE 1: Send immediate notification with phone number only
-            console.log(`\n📤 STAGE 1: Sending immediate phone number...`);
-            sendProgressiveUpdate(entityUserExtension, 1, {
-              phoneNumber: vinPhoneNumber
-            }, callInfo);
-            
-            // Check cache first
-            const cachedData = getCachedCustomerData(vinPhoneNumber);
-            
-            if (cachedData) {
-              // Send cached data immediately as complete
-              console.log(`🎯 Using cached data - sending as complete`);
-              sendProgressiveUpdate(entityUserExtension, 4, cachedData, callInfo);
-              
-              // ALSO send in legacy format for backward compatibility
-              const legacyNotification = {
-                type: 'call_notification',
-                data: {
-                  ...callInfo,
-                  customerData: cachedData
+                if (targetExtensions.has(entityUserExtension)) {
+                  shouldStartTimer = true;
+                  timerUserExtension = entityUserExtension;
+                } else if (participantDetails.party_dn && targetExtensions.has(participantDetails.party_dn)) {
+                  shouldStartTimer = true;
+                  timerUserExtension = participantDetails.party_dn;
                 }
-              };
-              broadcastToUser(entityUserExtension, legacyNotification);
-              console.log(`📤 Legacy format sent to ${entityUserExtension}`);
-              
-              // Save cached call to MongoDB
-              if (!savedCalls.has(callId)) {
-                try {
-                  savedCalls.set(callId, Date.now());
-                  const uniqueId = `${callId}-${Date.now()}`;
-                  await saveCallData({
-                    _id: uniqueId,
-                    userExtension: entityUserExtension,
-                    callId: callInfo.callId,
-                    callerName: callInfo.callerName,
-                    callerNumber: callInfo.callerNumber,
-                    extension: callInfo.extension,
-                    status: callInfo.status,
-                    timestamp: callInfo.timestamp,
-                    customerData: cachedData,
-                    phoneNumber: vinPhoneNumber,
-                    fromCache: true
+
+                if (shouldStartTimer && timerUserExtension) {
+                  if (activeCallTimers.has(callId)) {
+                    return;
+                  }
+
+                  const startTime = Date.now();
+                  activeCallTimers.set(callId, {
+                    startTime: startTime,
+                    userExtension: timerUserExtension,
+                    status: 'active',
+                    expectingImmediateEnd: true,
+                    startedFromEntity: entityUserExtension
                   });
-                  console.log('💾 Cached call data saved to database');
-                } catch (dbError) {
-                  console.error('❌ Failed to save cached call data:', dbError);
+
+                  console.log(`⏱️ CALL TIMER STARTED - Call ID: ${callId}, User: ${timerUserExtension}`);
+                  
+                  broadcastToUser(timerUserExtension, {
+                    type: 'call_timer_started',
+                    callId: callId,
+                    startTime: startTime,
+                    timestamp: new Date().toISOString()
+                  });
                 }
               }
-            } else {
-              // Start progressive fetch
-              console.log(`🔄 Starting progressive data fetch...`);
-              await fetchCustomerDataProgressive(vinPhoneNumber, entityUserExtension, callInfo);
+              
+              if (message.event.event_type === 0 && participantDetails.status === "Ringing") {
+                const callKey = `${entityUserExtension}-${callId}`;
+                
+                if (processedCalls.has(callKey)) {
+                  console.log(`⏭️ Skipping duplicate call ${callId} for extension ${entityUserExtension}`);
+                  return;
+                }
+                
+                processedCalls.set(callKey, Date.now());
+                
+                const callReceiveTime = Date.now();
+                console.log(`\n${'='.repeat(70)}`);
+                console.log(`📞 INCOMING CALL DETECTED`);
+                console.log(`${'='.repeat(70)}`);
+                console.log(`👤 Extension: ${entityUserExtension}`);
+                console.log(`📞 Call ID: ${callId}`);
+                console.log(`⏰ Timestamp: ${new Date().toISOString()}`);
+                
+                const pbxFetchTime = Date.now();
+                const pbxDuration = ((pbxFetchTime - callReceiveTime) / 1000).toFixed(3);
+                
+                const callerNumber = participantDetails.party_caller_id;
+                
+                console.log(`\n📋 3CX CALL DETAILS RECEIVED (${pbxDuration}s):`);
+                console.log(`   Caller Name: ${participantDetails.party_caller_name}`);
+                console.log(`   Caller Number: ${callerNumber}`);
+                console.log(`   Status: ${participantDetails.status}`);
+                
+                let vinPhoneNumber;
+                if (PRODUCTION_MODE) {
+                  vinPhoneNumber = extractPhoneDigits(callerNumber);
+                  console.log(`✅ PRODUCTION MODE: Using actual number: ${vinPhoneNumber}`);
+                } else {
+                  vinPhoneNumber = TEST_PHONE_NUMBER;
+                  console.log(`🧪 TESTING MODE: Using test number: ${vinPhoneNumber}`);
+                }
+                
+                const callInfo = {
+                  callerName: participantDetails.party_caller_name,
+                  callerNumber: participantDetails.party_caller_id,
+                  extension: participantDetails.dn,
+                  status: participantDetails.status,
+                  partyDnType: participantDetails.party_dn_type,
+                  callId: callId,
+                  timestamp: new Date().toISOString(),
+                  userExtension: entityUserExtension
+                };
+                
+                console.log(`\n📤 STAGE 1: Sending immediate phone number...`);
+                sendProgressiveUpdate(entityUserExtension, 1, {
+                  phoneNumber: vinPhoneNumber
+                }, callInfo);
+                
+                const cachedData = getCachedCustomerData(vinPhoneNumber);
+                
+                if (cachedData) {
+                  console.log(`🎯 Using cached data - sending as complete`);
+                  sendProgressiveUpdate(entityUserExtension, 4, cachedData, callInfo);
+                  
+                  const legacyNotification = {
+                    type: 'call_notification',
+                    data: {
+                      ...callInfo,
+                      customerData: cachedData
+                    }
+                  };
+                  broadcastToUser(entityUserExtension, legacyNotification);
+                  
+                  if (!savedCalls.has(callId)) {
+                    try {
+                      savedCalls.set(callId, Date.now());
+                      const uniqueId = `${callId}-${Date.now()}`;
+                      await saveCallData({
+                        _id: uniqueId,
+                        userExtension: entityUserExtension,
+                        callId: callInfo.callId,
+                        callerName: callInfo.callerName,
+                        callerNumber: callInfo.callerNumber,
+                        extension: callInfo.extension,
+                        status: callInfo.status,
+                        timestamp: callInfo.timestamp,
+                        customerData: cachedData,
+                        phoneNumber: vinPhoneNumber,
+                        fromCache: true
+                      });
+                      console.log('💾 Cached call data saved to database');
+                    } catch (dbError) {
+                      console.error('❌ Failed to save cached call data:', dbError);
+                    }
+                  }
+                } else {
+                  console.log(`🔄 Starting progressive data fetch...`);
+                  await fetchCustomerDataProgressive(vinPhoneNumber, entityUserExtension, callInfo);
+                }
+                
+                const totalCallHandlingTime = ((Date.now() - callReceiveTime) / 1000).toFixed(2);
+                console.log(`\n⏱️ Total call handling time: ${totalCallHandlingTime}s`);
+                console.log(`${'='.repeat(70)}\n`);
+              }
             }
-            
-            const totalCallHandlingTime = ((Date.now() - callReceiveTime) / 1000).toFixed(2);
-            console.log(`\n⏱️ Total call handling time: ${totalCallHandlingTime}s`);
-            console.log(`${'='.repeat(70)}\n`);
           }
         }
+      } catch (error) {
+        console.error('❌ Error processing message:', error.message);
       }
-    }
-  } catch (error) {
-    console.error('❌ Error processing message:', error.message);
-  }
-});
+    });
 
     pbxWebSocket.on('error', (error) => {
       console.error('❌ 3CX WebSocket error:', error.message);
@@ -1491,7 +1629,7 @@ const PORT = process.env.PORT || 7080;
 
 server.listen(PORT, '0.0.0.0', async () => {
   console.log(`\n${'='.repeat(60)}`);
-  console.log(`🚀 3CX + VinSolutions Integration Server`);
+  console.log(`🚀 3CX + VinSolutions + Tekion Integration Server`);
   console.log(`${'='.repeat(60)}`);
   console.log(`Server running on port ${PORT}`);
 
@@ -1507,12 +1645,13 @@ server.listen(PORT, '0.0.0.0', async () => {
   console.log(`\n📡 PROGRESSIVE LOADING: Enabled (4 stages)`);
   console.log(`\n⏱️ CALL TIMER: Based on 'Connected' status`);
   console.log(`\n🔄 TOKEN REFRESH: Every ${TOKEN_REFRESH_INTERVAL / 1000} seconds`);
+  console.log(`\n🔗 DATA SOURCES: VinSolutions + Tekion (Parallel)`);
 
   console.log(`${'='.repeat(60)}\n`);
 
   try {
     await getAccessToken();
-    startTokenRefreshInterval(); // Start token refresh interval
+    startTokenRefreshInterval();
     await getVinToken();
     await connectDB();
     await connectTo3CXWebSocket();
