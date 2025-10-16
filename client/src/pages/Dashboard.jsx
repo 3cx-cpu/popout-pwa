@@ -20,6 +20,34 @@ const Dashboard = ({ customerDataProp, fromProp, onClose, loadingStage = 4, isCa
     console.log('📊 Dashboard received new customerData:', customerDataProp);
     setCustomerData(customerDataProp);
 
+    if (customerDataProp) {
+      console.log('\n' + '🎯'.repeat(30));
+      console.log('DASHBOARD DATA UPDATE');
+      console.log('Has Multi-Call Data:', !!customerDataProp.multiCall);
+
+      if (customerDataProp.multiCall) {
+        console.log('Multi-Call Details:', {
+          isMultiCall: customerDataProp.multiCall.isMultiCall,
+          totalCalls: customerDataProp.multiCall.totalCalls,
+          callIndex: customerDataProp.multiCall.callIndex,
+          allCalls: customerDataProp.multiCall.allCalls,
+          otherCallsCount: customerDataProp.multiCall.otherCallsData?.length
+        });
+
+        // Log each call's data
+        customerDataProp.multiCall.otherCallsData?.forEach((otherCall, index) => {
+          console.log(`Other Call ${index + 1}:`, {
+            callId: otherCall.callId,
+            phoneNumber: otherCall.phoneNumber,
+            hasData: !!otherCall.data,
+            customerName: otherCall.data?.contact?.fullName
+          });
+        });
+      }
+
+      console.log('🎯'.repeat(30) + '\n');
+    }
+
     if (customerDataProp?.tekionData) {
       console.log('🎯 TEKION DATA IN DASHBOARD:', customerDataProp.tekionData);
 
@@ -164,10 +192,10 @@ const Dashboard = ({ customerDataProp, fromProp, onClose, loadingStage = 4, isCa
           {stages.map((stage) => (
             <div key={stage.number} className="flex items-center gap-2">
               <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${stage.complete
-                  ? 'bg-green-500 text-white'
-                  : stage.number === loadingStage
-                    ? 'bg-blue-500 text-white animate-pulse'
-                    : 'bg-gray-300 text-gray-600'
+                ? 'bg-green-500 text-white'
+                : stage.number === loadingStage
+                  ? 'bg-blue-500 text-white animate-pulse'
+                  : 'bg-gray-300 text-gray-600'
                 }`}>
                 {stage.complete ? '✓' : stage.number}
               </div>
@@ -191,10 +219,10 @@ const Dashboard = ({ customerDataProp, fromProp, onClose, loadingStage = 4, isCa
 
 
 
-  console.log('🎯 Passing to ServiceAdvisor:', {
-    hasTekionData: !!currentCustomerData.tekionData,
-    tekionData: currentCustomerData.tekionData
-  });
+    console.log('🎯 Passing to ServiceAdvisor:', {
+      hasTekionData: !!currentCustomerData.tekionData,
+      tekionData: currentCustomerData.tekionData
+    });
     // Show progressive loading states
     const loading = !hasCompleteData;
 
@@ -225,17 +253,17 @@ const Dashboard = ({ customerDataProp, fromProp, onClose, loadingStage = 4, isCa
             loadingStage={loadingStage}
           />
         );
-   case 'serviceAdvisor':
-      return (
-        <ServiceAdvisorMainCard
-          loading={loading}
-          serviceData={{
-            tekionData: currentCustomerData?.tekionData, // Pass Tekion data
-            contact: currentContactData?.contact
-          }}
-          loadingStage={loadingStage}
-        />
-      );
+      case 'serviceAdvisor':
+        return (
+          <ServiceAdvisorMainCard
+            loading={loading}
+            serviceData={{
+              tekionData: currentCustomerData?.tekionData, // Pass Tekion data
+              contact: currentContactData?.contact
+            }}
+            loadingStage={loadingStage}
+          />
+        );
       default:
         return (
           <div className="flex items-center justify-center h-96 text-gray-500">

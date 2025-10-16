@@ -101,7 +101,7 @@ function App() {
       if (document.visibilityState === 'visible' && isAuthenticated && currentUser) {
         const now = Date.now();
         const timeSinceLastCheck = now - lastVisibilityCheckRef.current;
-        
+
         // If more than 60 seconds since last check, verify connection
         if (timeSinceLastCheck > 60000) {
           console.log('⏰ Long idle detected - verifying connection...');
@@ -269,13 +269,13 @@ function App() {
 
       ws.onopen = () => {
         console.log('✅ WebSocket connected successfully');
-        
+
         // Clear connection timeout
         if (connectionTimeoutRef.current) {
           clearTimeout(connectionTimeoutRef.current);
           connectionTimeoutRef.current = null;
         }
-        
+
         setConnectionStatus('connected');
         setReconnectAttempts(0);
         isReconnectingRef.current = false;
@@ -294,6 +294,62 @@ function App() {
           const message = JSON.parse(event.data);
           console.log('📨 Received message type:', message.type, message);
 
+          // ========== ADD THIS LOGGING SECTION ==========
+          console.log('\n' + '='.repeat(60));
+          console.log('📨 WEBSOCKET MESSAGE RECEIVED');
+          console.log('Type:', message.type);
+          console.log('Timestamp:', new Date().toISOString());
+
+          // Log multi-call specific data
+          if (message.type === 'concurrent_call_alert') {
+            console.log('🚨 CONCURRENT CALL ALERT!');
+            console.log('Total Concurrent Calls:', message.totalConcurrentCalls);
+            console.log('New Call ID:', message.newCallId);
+            console.log('New Phone Number:', message.phoneNumber);
+            console.log('All Calls:', message.allCalls);
+            console.log('='.repeat(60) + '\n');
+          }
+
+          if (message.type === 'multi_call_update') {
+            console.log('📞 MULTI-CALL UPDATE RECEIVED');
+            console.log('Stage:', message.stage);
+            console.log('Multi-Call Info:', message.multiCall);
+            console.log('Total Calls:', message.multiCall?.totalCalls);
+            console.log('Current Call Index:', message.multiCall?.callIndex);
+            console.log('All Calls:', message.multiCall?.allCalls);
+            console.log('Other Calls Data:', message.multiCall?.otherCallsData);
+            console.log('='.repeat(60) + '\n');
+          }
+
+          if (message.type === 'progressive_update' && message.multiCall) {
+            console.log('📊 PROGRESSIVE UPDATE WITH MULTI-CALL');
+            console.log('Is Multi-Call:', message.multiCall.isMultiCall);
+            console.log('Total Calls:', message.multiCall.totalCalls);
+            console.log('Call Index:', message.multiCall.callIndex);
+            console.log('All Calls:', message.multiCall.allCalls);
+            console.log('='.repeat(60) + '\n');
+          }
+
+          // Log call timer events
+          if (message.type === 'call_timer_started') {
+            console.log('⏱️ CALL TIMER STARTED');
+            console.log('Call ID:', message.callId);
+            console.log('Start Time:', new Date(message.startTime).toLocaleTimeString());
+          }
+
+          if (message.type === 'call_timer_ended') {
+            console.log('⏱️ CALL TIMER ENDED');
+            console.log('Call ID:', message.callId);
+            console.log('Duration:', message.duration, 'seconds');
+          }
+
+          if (message.type === 'call_ended') {
+            console.log('📞 CALL ENDED');
+            console.log('Call ID:', message.callId);
+            console.log('Extension:', message.userExtension);
+          }
+          // ========== END OF LOGGING SECTION ==========
+
           if (message.type === 'pong') {
             console.log('📥 Received pong from server');
             if (pongTimeoutRef.current) {
@@ -304,49 +360,49 @@ function App() {
           }
 
           if (message.type === 'complete_customer_data') {
-      console.log('✅ COMPLETE CUSTOMER DATA RECEIVED:', message);
-      const callId = message.callInfo?.callId;
-      
-      if (!callId) {
-        console.warn('⚠️ No callId in complete_customer_data');
-        return;
-      }
+            console.log('✅ COMPLETE CUSTOMER DATA RECEIVED:', message);
+            const callId = message.callInfo?.callId;
 
-      // Update the call with complete Tekion data
-      setCurrentCalls(prevCalls => {
-        return prevCalls.map(call => {
-          if (call.callId === callId) {
-            console.log('🔄 Updating call with Tekion data:', callId);
-            return {
-              ...call,
-              customerData: {
-                ...call.customerData,
-                ...message.vinSolutions,
-                tekionData: message.tekion
-              },
-              tekionData: message.tekion, // Also store at top level for easy access
-              fullyLoaded: true,
-              loadingStage: 4
-            };
+            if (!callId) {
+              console.warn('⚠️ No callId in complete_customer_data');
+              return;
+            }
+
+            // Update the call with complete Tekion data
+            setCurrentCalls(prevCalls => {
+              return prevCalls.map(call => {
+                if (call.callId === callId) {
+                  console.log('🔄 Updating call with Tekion data:', callId);
+                  return {
+                    ...call,
+                    customerData: {
+                      ...call.customerData,
+                      ...message.vinSolutions,
+                      tekionData: message.tekion
+                    },
+                    tekionData: message.tekion, // Also store at top level for easy access
+                    fullyLoaded: true,
+                    loadingStage: 4
+                  };
+                }
+                return call;
+              });
+            });
+
+            // Update popup if showing this call
+            setCallInfo(prevInfo => {
+              if (prevInfo && prevInfo.callId === callId) {
+                setCustomerData(prevData => ({
+                  ...prevData,
+                  ...message.vinSolutions,
+                  tekionData: message.tekion
+                }));
+              }
+              return prevInfo;
+            });
+
+            return;
           }
-          return call;
-        });
-      });
-
-      // Update popup if showing this call
-      setCallInfo(prevInfo => {
-        if (prevInfo && prevInfo.callId === callId) {
-          setCustomerData(prevData => ({
-            ...prevData,
-            ...message.vinSolutions,
-            tekionData: message.tekion
-          }));
-        }
-        return prevInfo;
-      });
-
-      return;
-    }
 
           // Handle call timer started
           if (message.type === 'call_timer_started') {
@@ -355,7 +411,7 @@ function App() {
             setCallStartTime(startTime);
             setCurrentCallId(callId);
             setIsCallActive(true);
-            
+
             // Update the call in currentCalls with timer info
             setCurrentCalls(prevCalls => {
               return prevCalls.map(call => {
@@ -376,10 +432,10 @@ function App() {
           if (message.type === 'call_timer_ended') {
             console.log('⏱️ Call timer ended notification received');
             const { callId, duration } = message;
-            
+
             setIsCallActive(false);
             setCallStartTime(null);
-            
+
             // Update the call with final duration
             setCurrentCalls(prevCalls => {
               return prevCalls.map(call => {
@@ -394,7 +450,7 @@ function App() {
                 return call;
               });
             });
-            
+
             // Delay closing popup to show final duration
             setTimeout(() => {
               if (currentCallId === callId && showCustomerPopup) {
@@ -412,9 +468,9 @@ function App() {
           if (message.type === 'call_ended') {
             console.log('📞 Call ended notification received');
             const { callId } = message;
-            
+
             setIsCallActive(false);
-            
+
             // If no timer was started (call wasn't answered), still mark as ended
             setCurrentCalls(prevCalls => {
               return prevCalls.map(call => {
@@ -428,7 +484,7 @@ function App() {
                 return call;
               });
             });
-            
+
             setTimeout(() => {
               if (currentCallId === callId && showCustomerPopup) {
                 setShowCustomerPopup(false);
@@ -445,7 +501,7 @@ function App() {
           if (message.type === 'progressive_update') {
             console.log('🔄 Processing progressive update, stage:', message.stage);
             const callId = message.callInfo?.callId;
-            
+
             if (!callId) {
               console.warn('⚠️ No callId in progressive update');
               return;
@@ -454,13 +510,13 @@ function App() {
             // UPDATE CALL IN STATE
             setCurrentCalls(prevCalls => {
               const existingCallIndex = prevCalls.findIndex(call => call.callId === callId);
-              
+
               if (existingCallIndex !== -1) {
                 // UPDATE EXISTING CALL
                 console.log(`🔄 Updating existing call ${callId} at stage ${message.stage}`);
                 const updatedCalls = [...prevCalls];
                 const existingCall = updatedCalls[existingCallIndex];
-                
+
                 if (message.stage === 1) {
                   existingCall.phoneNumber = message.data.phoneNumber;
                 } else if (message.stage === 2) {
@@ -480,11 +536,11 @@ function App() {
                   existingCall.customerData = message.data;
                   existingCall.fullyLoaded = true;
                 }
-                
+
                 existingCall.lastUpdate = new Date().toISOString();
                 existingCall.loadingStage = message.stage;
                 updatedCalls[existingCallIndex] = existingCall;
-                
+
                 return updatedCalls;
               } else {
                 // CREATE NEW CALL (ONLY ON STAGE 1)
@@ -506,7 +562,7 @@ function App() {
                     timerStarted: false,
                     callEnded: false
                   };
-                  
+
                   return [newCall, ...prevCalls];
                 } else {
                   console.warn(`⚠️ Received stage ${message.stage} for unknown call ${callId} - ignoring`);
@@ -518,7 +574,7 @@ function App() {
             // UPDATE POPUP STATES SEPARATELY
             setCurrentCalls(prevCalls => {
               const call = prevCalls.find(c => c.callId === callId);
-              
+
               if (call) {
                 // Update popup if it's showing or if it's a new call (stage 1)
                 if (message.stage === 1) {
@@ -533,10 +589,10 @@ function App() {
                   });
                   setCustomerData(null);
                   setLoadingStage(1);
-                  
+
                   // Play sound and show notification
                   audioRef.current?.play().catch(() => console.log('🔇 Audio play prevented'));
-                  
+
                   if ('Notification' in window && Notification.permission === 'granted') {
                     new Notification('Incoming Call', {
                       body: `Call from ${call.phoneNumber}`,
@@ -550,7 +606,7 @@ function App() {
                     if (prevInfo && prevInfo.callId === callId) {
                       setCustomerData(call.customerData);
                       setLoadingStage(message.stage);
-                      
+
                       if (message.data.contact?.fullName) {
                         return {
                           ...prevInfo,
@@ -562,7 +618,7 @@ function App() {
                   });
                 }
               }
-              
+
               return prevCalls;
             });
 
@@ -576,7 +632,7 @@ function App() {
           else if (message.type === 'call_notification' &&
             message.data.userExtension === currentUser.username) {
             console.log('📞 Processing legacy call notification');
-            
+
             const callId = message.data?.callId;
             if (!callId) {
               console.warn('⚠️ No callId in call notification');
@@ -585,12 +641,12 @@ function App() {
 
             setCurrentCalls(prevCalls => {
               const existingCall = prevCalls.find(call => call.callId === callId);
-              
+
               if (existingCall) {
                 console.log(`⏭️ Skipping legacy notification - call ${callId} already exists`);
                 return prevCalls;
               }
-              
+
               console.log('🆕 Creating call from legacy notification:', callId);
               const newCall = {
                 id: Date.now(),
@@ -631,13 +687,13 @@ function App() {
 
               return [newCall, ...prevCalls];
             });
-          } 
-          
+          }
+
           else if (message.type === 'authenticated') {
             console.log('✅ WebSocket authenticated for user:', currentUser.username);
             fetchCallHistory(currentUser.username);
-          } 
-          
+          }
+
           else if (message.type === 'connected') {
             console.log('✅ Server confirmed connection');
           }
@@ -756,7 +812,7 @@ function App() {
     setShowCustomerPopup(true);
     setLoadingStage(call.loadingStage || 4);
     setCurrentCallId(call.callId);
-    
+
     // Set call active state based on call status
     if (call.timerStarted && !call.callEnded) {
       setIsCallActive(true);
@@ -794,92 +850,92 @@ function App() {
     return connectionStatus;
   };
 
-// Add this state at the top of your App component
-const [showPassword, setShowPassword] = useState(false);
+  // Add this state at the top of your App component
+  const [showPassword, setShowPassword] = useState(false);
 
-// Login Screen
-if (!isAuthenticated) {
-  return (
-    <div className="login-container">
-      <div className="login-card">
-        <div className="login-form-section">
-          <div className="company-branding">
-            <div className="company-name">
-              <h1 className="company-name-main">CELEBRATION</h1>
-              <p className="company-name-sub">CHEVROLET</p>
+  // Login Screen
+  if (!isAuthenticated) {
+    return (
+      <div className="login-container">
+        <div className="login-card">
+          <div className="login-form-section">
+            <div className="company-branding">
+              <div className="company-name">
+                <h1 className="company-name-main">CELEBRATION</h1>
+                <p className="company-name-sub">CHEVROLET</p>
+              </div>
             </div>
-          </div>
-          <div className="login-header">
-            <h2>Login</h2>
-            {/* <p>Don't have an account? Create your account</p> */}
-          </div>
-          <form onSubmit={handleLogin} className="login-form">
-            <div className="form-group">
-              <label htmlFor="username">Extension</label>
-              <input
-                id="username"
-                type="text"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                placeholder="Enter your extension"
-                required
-                disabled={isLoggingIn}
-              />
+            <div className="login-header">
+              <h2>Login</h2>
+              {/* <p>Don't have an account? Create your account</p> */}
             </div>
-            <div className="form-group">
-              <label htmlFor="password">Password</label>
-              <div className="password-input-wrapper">
+            <form onSubmit={handleLogin} className="login-form">
+              <div className="form-group">
+                <label htmlFor="username">Extension</label>
                 <input
-                  id="password"
-                  type={showPassword ? "text" : "password"}
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="Enter your password"
+                  id="username"
+                  type="text"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  placeholder="Enter your extension"
                   required
                   disabled={isLoggingIn}
                 />
-                <button
-                  type="button"
-                  className="password-toggle"
-                  onClick={() => setShowPassword(!showPassword)}
-                  tabIndex="-1"
-                >
-                  {showPassword ? (
-                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
-                    </svg>
-                  ) : (
-                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                    </svg>
-                  )}
-                </button>
               </div>
+              <div className="form-group">
+                <label htmlFor="password">Password</label>
+                <div className="password-input-wrapper">
+                  <input
+                    id="password"
+                    type={showPassword ? "text" : "password"}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="Enter your password"
+                    required
+                    disabled={isLoggingIn}
+                  />
+                  <button
+                    type="button"
+                    className="password-toggle"
+                    onClick={() => setShowPassword(!showPassword)}
+                    tabIndex="-1"
+                  >
+                    {showPassword ? (
+                      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+                      </svg>
+                    ) : (
+                      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                      </svg>
+                    )}
+                  </button>
+                </div>
+              </div>
+              <div className="form-options">
+                <label className="remember-me">
+                  <input type="checkbox" />
+                  <span>Remember Me</span>
+                </label>
+                {/* <a href="#" className="forgot-password">Forgot password?</a> */}
+              </div>
+              {loginError && <div className="login-error">{loginError}</div>}
+              <button type="submit" className="btn-login" disabled={isLoggingIn}>
+                {isLoggingIn ? 'Signing in...' : 'LOGIN'}
+              </button>
+            </form>
+          </div>
+          <div className="login-welcome-section">
+            <div className="welcome-content">
+              <h1>Welcome<br />Back.</h1>
+              <p>Login to your call tracking dashboard and stay connected. Quick access to all your customer interactions.</p>
             </div>
-            <div className="form-options">
-              <label className="remember-me">
-                <input type="checkbox" />
-                <span>Remember Me</span>
-              </label>
-              {/* <a href="#" className="forgot-password">Forgot password?</a> */}
-            </div>
-            {loginError && <div className="login-error">{loginError}</div>}
-            <button type="submit" className="btn-login" disabled={isLoggingIn}>
-              {isLoggingIn ? 'Signing in...' : 'LOGIN'}
-            </button>
-          </form>
-        </div>
-        <div className="login-welcome-section">
-          <div className="welcome-content">
-            <h1>Welcome<br />Back.</h1>
-            <p>Login to your call tracking dashboard and stay connected. Quick access to all your customer interactions.</p>
           </div>
         </div>
       </div>
-    </div>
-  );
-}
+    );
+  }
 
   // Main App
   return (
@@ -955,7 +1011,7 @@ if (!isAuthenticated) {
                             <p><strong>Leads:</strong> {call.customerData.leads?.length || 0}</p>
                           </>
                         )}
-                        <p><strong>Status:</strong> 
+                        <p><strong>Status:</strong>
                           {call.timerStarted && !call.callEnded ? (
                             <span className="status-badge-small bg-green-100 text-green-700">Active</span>
                           ) : call.callEnded ? (
