@@ -1,171 +1,233 @@
-// client\src\components\cards\serviceAdvisor\ServiceAdvisorMainCard.jsx
+import React, { useState, useEffect } from 'react';
+import { FileText, Phone, Mail, Car, Calendar, Wrench, ChevronLeft, ChevronRight } from 'lucide-react';
 
-import React, { useState } from 'react';
-import { FileText, Phone, Mail, MapPin, Car, User, Calendar, Wrench } from 'lucide-react';
-
-// Individual Skeleton Components
+// Skeleton Components
 const RepairOrderSkeleton = () => (
   <div className="animate-pulse">
     <div className="h-4 bg-gray-200 rounded w-1/2 mb-3"></div>
     <div className="space-y-2">
-      <div className="flex justify-between">
-        <div className="h-3 bg-gray-200 rounded w-24"></div>
-        <div className="h-3 bg-gray-200 rounded w-28"></div>
-      </div>
-      <div className="flex justify-between">
-        <div className="h-3 bg-gray-200 rounded w-20"></div>
-        <div className="h-3 bg-gray-200 rounded w-40"></div>
-      </div>
-      <div className="flex justify-between">
-        <div className="h-3 bg-gray-200 rounded w-20"></div>
-        <div className="h-3 bg-gray-200 rounded w-36"></div>
-      </div>
-      <div className="flex justify-between">
-        <div className="h-3 bg-gray-200 rounded w-24"></div>
-        <div className="h-3 bg-gray-200 rounded w-32"></div>
-      </div>
+      {[1, 2, 3, 4].map(i => (
+        <div key={i} className="flex justify-between">
+          <div className="h-3 bg-gray-200 rounded w-24"></div>
+          <div className="h-3 bg-gray-200 rounded w-32"></div>
+        </div>
+      ))}
     </div>
   </div>
 );
 
-const CompletionDetailsSkeleton = () => (
-  <div className="animate-pulse">
-    <div className="h-4 bg-gray-200 rounded w-1/2 mb-3"></div>
-    <div className="space-y-2">
-      <div className="flex justify-between">
-        <div className="h-3 bg-gray-200 rounded w-24"></div>
-        <div className="h-3 bg-gray-200 rounded w-32"></div>
-      </div>
-      <div className="flex justify-between">
-        <div className="h-3 bg-gray-200 rounded w-28"></div>
-        <div className="h-3 bg-gray-200 rounded w-32"></div>
-      </div>
-      <div className="flex justify-between">
-        <div className="h-3 bg-gray-200 rounded w-28"></div>
-        <div className="h-3 bg-gray-200 rounded w-20"></div>
-      </div>
-      <div className="flex justify-between">
-        <div className="h-3 bg-gray-200 rounded w-16"></div>
-        <div className="h-6 bg-gray-200 rounded-full w-32"></div>
-      </div>
-    </div>
-  </div>
-);
+const ServiceAdvisorMainCard = ({ loading, serviceData, loadingStage }) => {
+  const [selectedROIndex, setSelectedROIndex] = useState(0);
+  const [custPayStatus, setCustPayStatus] = useState('Open');
+  
+  // Extract data
+  const tekionData = serviceData?.tekionData;
+  const repairOrders = tekionData?.repairOrders || [];
+  const contact = serviceData?.contact;
+  const allRepairOrders = tekionData?.repairOrders || [];
 
-const InvoiceBreakdownSkeleton = () => (
-  <div className="animate-pulse">
-    <div className="h-4 bg-gray-200 rounded w-1/3 mb-3"></div>
-    <div className="space-y-2">
-      <div className="flex justify-between">
-        <div className="h-3 bg-gray-200 rounded w-48"></div>
-        <div className="h-3 bg-gray-200 rounded w-20"></div>
-      </div>
-      <div className="flex justify-between">
-        <div className="h-3 bg-gray-200 rounded w-16"></div>
-        <div className="h-3 bg-gray-200 rounded w-20"></div>
-      </div>
-      <div className="flex justify-between">
-        <div className="h-3 bg-gray-200 rounded w-28"></div>
-        <div className="h-3 bg-gray-200 rounded w-16"></div>
-      </div>
-      <div className="flex justify-between">
-        <div className="h-3 bg-gray-200 rounded w-24"></div>
-        <div className="h-3 bg-gray-200 rounded w-16"></div>
-      </div>
-      <div className="flex justify-between pt-2 mt-2 border-t border-gray-200">
-        <div className="h-4 bg-gray-200 rounded w-36"></div>
-        <div className="h-4 bg-gray-200 rounded w-20"></div>
-      </div>
-    </div>
-  </div>
-);
+  // Debug logging
+  useEffect(() => {
+    console.log('🔧 ServiceAdvisorMainCard received:', {
+      tekionData,
+      contact,
+      repairOrdersCount: allRepairOrders.length,
+      loadingStage
+    });
+  }, [tekionData, contact, loadingStage, allRepairOrders.length]);
 
-const ServiceAdvisorMainCard = ({ loading, serviceData }) => {
-  const [custPayStatus, setCustPayStatus] = useState('Invoiced'); // Toggle between 'Invoiced' and 'Open'/'In Progress'
+  // Get the selected repair order
+  const selectedRO = allRepairOrders[selectedROIndex];
 
-  const repairOrder = serviceData?.repairOrder || {
-    roNumber: '#RO-252656',
-    service: 'Brake Service Complete',
-    vehicle: '2019 Silverado 1500',
-    technician: 'Mike Rodriguez',
-    completed: 'March 20, 2024',
-    promiseDate: 'March 20, 2024',
-    promiseTime: '4:00 PM',
-    status: 'Ready for Pickup',
-    amount: '$487.50'
-  };
-
-  const invoice = serviceData?.invoice || {
-    items: [
-      { description: 'Brake Pad Replacement (Front)', amount: '$285.00' },
-      { description: 'Labor', amount: '$162.50' },
-      { description: 'Shop Supplies', amount: '$15.00' },
-      { description: 'Tax (8.25%)', amount: '$25.00' }
-    ],
-    total: '$487.50'
-  };
-
-  const repairStatusItems = [
-    {
-      title: 'Oil Change & Filter Replacement',
-      partsStatus: 'In Stock',
-      partsStatusColor: 'text-green-600',
-      estimate: '$546.32',
-      status: 'Complete',
-      statusColor: 'bg-[#22c55e]'
-    },
-    {
-      title: 'Brake Pad Replacement (Front)',
-      partsStatus: 'Ordered',
-      partsStatusColor: 'text-orange-500',
-      estimate: '$546.32',
-      status: 'In-Progress',
-      statusColor: 'bg-[#3b82f6]'
-    },
-    {
-      title: 'Diagnostic - Check Engine Light',
-      partsStatus: 'Pending Diagnosis',
-      partsStatusColor: 'text-gray-500',
-      estimate: '$546.32',
-      status: 'In-Progress',
-      statusColor: 'bg-[#3b82f6]'
+  // Update payment status based on selected RO
+  useEffect(() => {
+    if (selectedRO) {
+      setCustPayStatus(selectedRO.status === 'CLOSED' ? 'Invoiced' : 'Open');
     }
-  ];
+  }, [selectedRO]);
 
-  const vehicle = serviceData?.vehicle || {
-    year: '2019',
-    make: 'Chevrolet',
-    model: 'Silverado 1500',
-    vin: '1GCUKREHXKZ123456',
-    mileage: '45,250',
-    lastService: 'March 20, 2024',
-    serviceAdvisor: 'Jennifer Martinez'
+  // Format currency (amounts are in cents)
+  const formatCurrency = (amount) => {
+    if (!amount && amount !== 0) return '$0.00';
+    return `$${(amount / 100).toFixed(2)}`;
   };
 
-  const contact = serviceData?.contact || {
-    phone: '(555) 123-4567',
-    email: 'sarah.johnson@email.com',
-    address: '1234 Oak Street\nDallas, TX 75201'
+  // Format date
+  const formatDate = (timestamp) => {
+    if (!timestamp) return 'N/A';
+    return new Date(timestamp).toLocaleDateString('en-US', { 
+      year: 'numeric', 
+      month: 'long', 
+      day: 'numeric' 
+    });
   };
+
+  // Format time
+  const formatTime = (timestamp) => {
+    if (!timestamp) return 'N/A';
+    return new Date(timestamp).toLocaleTimeString('en-US', { 
+      hour: 'numeric', 
+      minute: '2-digit',
+      hour12: true 
+    });
+  };
+
+  // Map repair order details for selected RO
+const repairOrder = selectedRO ? {
+  roNumber: `#${selectedRO.roNumber}`,
+  service: selectedRO.jobs?.map(job => job.description || job.name).filter(Boolean).join(', ') || 'Service',
+  vehicle: selectedRO.vehicle ? 
+    `${selectedRO.vehicle.year} ${selectedRO.vehicle.make} ${selectedRO.vehicle.model}` : 
+    'Vehicle Info Not Available',
+  // FIX: Get technician from techStories array inside jobs
+  technician: (() => {
+    // Try to find technician from any job's techStories
+    for (const job of selectedRO.jobs || []) {
+      if (job.techStories && job.techStories.length > 0) {
+        const techStory = job.techStories[0];
+        if (techStory.technician) {
+          return `${techStory.technician.firstName || ''} ${techStory.technician.lastName || ''}`.trim();
+        }
+      }
+    }
+    // Fallback to other possible locations
+    return selectedRO.technician?.name || 
+           selectedRO.assignedTechnician?.name || 
+           'Not Assigned';
+  })(),
+  completed: formatDate(selectedRO.closedTime),
+  promiseDate: formatDate(selectedRO.promiseTime),
+  promiseTime: formatTime(selectedRO.promiseTime),
+  status: selectedRO.status === 'CLOSED' ? 'Ready for Pickup' : selectedRO.status || 'In Progress',
+  amount: formatCurrency(selectedRO.financial?.totalAmount)
+} : null;
+
+  // Map invoice breakdown
+  const invoice = selectedRO?.financial ? {
+    items: [
+      ...(selectedRO.jobs || []).map(job => ({
+        description: job.description || job.name || 'Service Item',
+        amount: formatCurrency(job.amount || job.price || 0)
+      })),
+      { description: 'Labor', amount: formatCurrency(selectedRO.financial.laborTotal) },
+      { description: 'Parts', amount: formatCurrency(selectedRO.financial.partsTotal) },
+      { description: 'Tax', amount: formatCurrency(selectedRO.financial.tax) }
+    ].filter(item => item.description),
+    total: formatCurrency(selectedRO.financial.totalAmount)
+  } : null;
+
+  // Map repair status items from jobs
+  const repairStatusItems = selectedRO?.jobs?.map(job => ({
+    title: job.description || job.name || 'Service Item',
+    partsStatus: job.partsStatus || 'In Stock',
+    partsStatusColor: 
+      job.partsStatus === 'Ordered' ? 'text-orange-500' : 
+      job.partsStatus === 'In Stock' ? 'text-green-600' : 
+      'text-gray-500',
+    estimate: formatCurrency(job.amount || job.price || 0),
+    status: job.status === 'COMPLETED' ? 'Complete' : 'In-Progress',
+    statusColor: job.status === 'COMPLETED' ? 'bg-[#22c55e]' : 'bg-[#3b82f6]'
+  })) || [];
+
+  // Map vehicle information
+  const vehicle = selectedRO?.vehicle ? {
+    fullName: `${selectedRO.vehicle.year} ${selectedRO.vehicle.make} ${selectedRO.vehicle.model}`,
+    vin: selectedRO.vehicle.vin || 'N/A',
+    mileage: selectedRO.vehicle.mileageIn || selectedRO.vehicle.mileageOut || 'N/A',
+    lastService: formatDate(selectedRO.closedTime),
+    serviceAdvisor: selectedRO.serviceAdvisor?.name || selectedRO.customer?.serviceAdvisor || 'Not Assigned'
+  } : null;
+
+  // Map contact information
+  const contactInfo = selectedRO?.customer || contact ? {
+    phone: selectedRO?.customer?.phone || contact?.phone || contact?.phones?.[0]?.number || '(555) 123-4567',
+    email: selectedRO?.customer?.email || contact?.email || contact?.emails?.[0]?.address || 'No email on file',
+    address: selectedRO?.customer?.address ? 
+      `${selectedRO.customer.address.street || ''}\n${selectedRO.customer.address.city || ''}, ${selectedRO.customer.address.state || ''} ${selectedRO.customer.address.zip || ''}`.trim() : 
+      'No address on file'
+  } : null;
+
+  // Loading state
+  if (allRepairOrders.length === 0 && loadingStage < 4) {
+    return (
+      <div className="max-w-[1280px] mx-auto space-y-4">
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+          <div className="animate-pulse space-y-4">
+            <div className="h-8 bg-gray-200 rounded w-1/3"></div>
+            <div className="h-4 bg-gray-200 rounded w-2/3"></div>
+            <div className="h-4 bg-gray-200 rounded w-1/2"></div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // No repair orders
+  if (allRepairOrders.length === 0) {
+    return (
+      <div className="max-w-[1280px] mx-auto space-y-4">
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 text-center">
+          <p className="text-gray-600">No repair orders found for this customer</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-[1280px] mx-auto space-y-4">
-      {/* Testing Toggle Button */}
+      {/* RO Tabs Navigation */}
       <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
-        <div className="flex items-center justify-between">
-          <span className="font-semibold text-gray-700">Test Toggle (custPayStatus):</span>
-          <button
-            onClick={() => setCustPayStatus(custPayStatus === 'Invoiced' ? 'Open' : 'Invoiced')}
-            className="bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded-lg"
-          >
-            Current: {custPayStatus} (Click to toggle)
-          </button>
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="font-semibold text-gray-900">Repair Orders ({allRepairOrders.length})</h3>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setSelectedROIndex(Math.max(0, selectedROIndex - 1))}
+              disabled={selectedROIndex === 0}
+              className={`p-1 rounded ${selectedROIndex === 0 
+                ? 'text-gray-400 cursor-not-allowed' 
+                : 'text-blue-600 hover:bg-blue-50'}`}
+            >
+              <ChevronLeft className="w-5 h-5" />
+            </button>
+            <span className="text-sm text-gray-600">
+              {selectedROIndex + 1} of {allRepairOrders.length}
+            </span>
+            <button
+              onClick={() => setSelectedROIndex(Math.min(allRepairOrders.length - 1, selectedROIndex + 1))}
+              disabled={selectedROIndex === allRepairOrders.length - 1}
+              className={`p-1 rounded ${selectedROIndex === allRepairOrders.length - 1 
+                ? 'text-gray-400 cursor-not-allowed' 
+                : 'text-blue-600 hover:bg-blue-50'}`}
+            >
+              <ChevronRight className="w-5 h-5" />
+            </button>
+          </div>
+        </div>
+        
+        {/* Tabs */}
+        <div className="flex gap-2 flex-wrap">
+          {allRepairOrders.map((ro, index) => (
+            <button
+              key={ro.roId || index}
+              onClick={() => setSelectedROIndex(index)}
+              className={`px-4 py-2 rounded-lg font-medium transition-all ${
+                index === selectedROIndex
+                  ? 'bg-blue-600 text-white shadow-md'
+                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+              }`}
+            >
+              <div className="flex flex-col items-start">
+                <span className="text-sm">RO #{ro.roNumber}</span>
+                <span className="text-xs opacity-80">{formatDate(ro.createdTime)}</span>
+              </div>
+            </button>
+          ))}
         </div>
       </div>
 
       {/* Main Invoice Card */}
       <div className="bg-[#dde8ff] border-l-4 border-blue-900 p-6 rounded-lg">
-        {/* Header Section - directly on light blue background */}
+        {/* Header Section */}
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-3">
             <div className="bg-[#1e3a8a] rounded-full flex items-center justify-center p-3">
@@ -175,13 +237,19 @@ const ServiceAdvisorMainCard = ({ loading, serviceData }) => {
               </svg>
             </div>
             <div>
-              <h2 className="text-lg font-bold text-gray-900">Invoiced Repair Order</h2>
-              <p className="text-sm text-gray-600">Payment Required - Customer Calling</p>
+              <h2 className="text-lg font-bold text-gray-900">
+                {custPayStatus === 'Invoiced' ? 'Invoiced Repair Order' : 'Open Repair Order'}
+              </h2>
+              <p className="text-sm text-gray-600">
+                {custPayStatus === 'Invoiced' ? 'Payment Required - Customer Calling' : 'Service In Progress'}
+              </p>
             </div>
           </div>
           <div className="text-right">
             <div className="text-2xl font-bold text-gray-900">{repairOrder.amount}</div>
-            <div className="text-xs text-gray-600">Amount Due</div>
+            <div className="text-xs text-gray-600">
+              {custPayStatus === 'Invoiced' ? 'Amount Due' : 'Estimate'}
+            </div>
           </div>
         </div>
 
@@ -223,7 +291,7 @@ const ServiceAdvisorMainCard = ({ loading, serviceData }) => {
             {/* Completion & Promise Details */}
             <div className="bg-white rounded-lg p-4 shadow-sm border border-gray-200">
               {loading ? (
-                <CompletionDetailsSkeleton />
+                <RepairOrderSkeleton />
               ) : (
                 <>
                   <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
@@ -255,35 +323,27 @@ const ServiceAdvisorMainCard = ({ loading, serviceData }) => {
             </div>
           </div>
 
-          {/* Conditional Card: Invoice Breakdown OR Repair Status */}
+          {/* Conditional Card */}
           {custPayStatus === 'Invoiced' ? (
-            // Invoice Breakdown (when Invoiced)
             <div className="bg-white rounded-lg p-4 shadow-sm border border-gray-200">
-              {loading ? (
-                <InvoiceBreakdownSkeleton />
-              ) : (
-                <>
-                  <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
-                    <FileText className="w-4 h-4 text-blue-600" />
-                    Invoice Breakdown
-                  </h3>
-                  <div className="space-y-2">
-                    {invoice.items.map((item, index) => (
-                      <div key={index} className="flex justify-between text-sm">
-                        <span className="text-gray-700">{item.description}</span>
-                        <span className="font-semibold">{item.amount}</span>
-                      </div>
-                    ))}
-                    <div className="flex justify-between text-base font-bold pt-2 border-t">
-                      <span>Total Amount Due:</span>
-                      <span>{invoice.total}</span>
-                    </div>
+              <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
+                <FileText className="w-4 h-4 text-blue-600" />
+                Invoice Breakdown
+              </h3>
+              <div className="space-y-2">
+                {invoice?.items.map((item, index) => (
+                  <div key={index} className="flex justify-between text-sm">
+                    <span className="text-gray-700">{item.description}</span>
+                    <span className="font-semibold">{item.amount}</span>
                   </div>
-                </>
-              )}
+                ))}
+                <div className="flex justify-between text-base font-bold pt-2 border-t">
+                  <span>Total Amount Due:</span>
+                  <span>{invoice?.total}</span>
+                </div>
+              </div>
             </div>
           ) : (
-            // Repair Status (when Open or In Progress) - No background wrapper
             <div>
               <h3 className="font-semibold text-gray-900 mb-3">Repair Status</h3>
               <div className="space-y-3">
@@ -300,7 +360,7 @@ const ServiceAdvisorMainCard = ({ loading, serviceData }) => {
                             </span>
                           </div>
                           <div>
-                            <span className="text-gray-600">Estimate :</span>
+                            <span className="text-gray-600">Estimate:</span>
                             <span className="font-semibold ml-1 text-gray-900">{item.estimate}</span>
                           </div>
                         </div>
@@ -316,7 +376,7 @@ const ServiceAdvisorMainCard = ({ loading, serviceData }) => {
           )}
         </div>
 
-        {/* Send Payment Link Button - Only show when Invoiced */}
+        {/* Send Payment Link Button */}
         {custPayStatus === 'Invoiced' && (
           <div className="flex justify-end mt-6">
             <button className="bg-white hover:bg-gray-50 text-[#002e85] font-medium py-2 px-4 rounded-lg flex items-center gap-2 text-sm border border-gray-200">
@@ -328,112 +388,108 @@ const ServiceAdvisorMainCard = ({ loading, serviceData }) => {
           </div>
         )}
       </div>
+
       {/* Bottom Section Cards */}
-<div className="grid grid-cols-3 gap-4">
-  {/* Vehicle Information */}
-<div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
-  <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
-    <Car className="w-4 h-4" style={{ color: '#1e3a8a' }} />
-    Vehicle Information
-  </h3>
-  <div className="flex items-start gap-3">
-    <div className="w-12 h-12 rounded-lg flex items-center justify-center text-white" style={{ backgroundColor: '#1e3a8a' }}>
-      <svg className="w-6 h-6" viewBox="0 0 24 24" fill="currentColor">
-        <path d="M20 8h-3V4H3c-1.1 0-2 .9-2 2v11h2c0 1.66 1.34 3 3 3s3-1.34 3-3h6c0 1.66 1.34 3 3 3s3-1.34 3-3h2v-5l-3-4zM6 18c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1zm13.5-8.5l1.96 2.5H17V9.5h2.5zM18 18c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1z"/>
-      </svg>
-    </div>
-    <div className="flex-1 space-y-1 text-sm">
-      <div className="font-semibold" style={{ color: '#0b1b2c' }}>
-        2019 Chevrolet Silverado 1500
-      </div>
-      <div style={{ color: '#3d4858' }}>VIN: 1GCUKREH5KZ123456</div>
-      <div style={{ color: '#9095a0' }}>Mileage: 45,250</div>
-      <div className="pt-2 mt-2 space-y-1 text-xs" style={{ borderTop: '1px solid #e4e6eb' }}>
-        <div style={{ color: '#414c5b' }}>
-          Last Service: <span className="font-semibold text-black">March 20, 2024</span>
-        </div>
-        <div style={{ color: '#414c5b' }}>
-          Service Advisor: <span className="font-semibold text-black">Jennifer Martinez</span>
-        </div>
-      </div>
-    </div>
-  </div>
-</div>
+      <div className="grid grid-cols-3 gap-4">
+        {/* Vehicle Information */}
+        {vehicle && (
+          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
+            <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
+              <Car className="w-4 h-4" style={{ color: '#1e3a8a' }} />
+              Vehicle Information
+            </h3>
+            <div className="flex items-start gap-3">
+              <div className="w-12 h-12 rounded-lg flex items-center justify-center text-white" style={{ backgroundColor: '#1e3a8a' }}>
+                <svg className="w-6 h-6" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M20 8h-3V4H3c-1.1 0-2 .9-2 2v11h2c0 1.66 1.34 3 3 3s3-1.34 3-3h6c0 1.66 1.34 3 3 3s3-1.34 3-3h2v-5l-3-4zM6 18c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1zm13.5-8.5l1.96 2.5H17V9.5h2.5zM18 18c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1z"/>
+                </svg>
+              </div>
+              <div className="flex-1 space-y-1 text-sm">
+                <div className="font-semibold text-gray-900">{vehicle.fullName}</div>
+                <div className="text-gray-600">VIN: {vehicle.vin}</div>
+                <div className="text-gray-500">Mileage: {vehicle.mileage}</div>
+                <div className="pt-2 mt-2 border-t space-y-1 text-xs">
+                  <div className="text-gray-600">
+                    Last Service: <span className="font-semibold text-black">{vehicle.lastService}</span>
+                  </div>
+                  <div className="text-gray-600">
+                    Service Advisor: <span className="font-semibold text-black">{vehicle.serviceAdvisor}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
-  {/* Contact Information */}
-<div className="bg-white rounded-lg shadow-sm border border-gray-200 p-5">
-  <div className="flex items-center gap-2 mb-6">
-    <div className="w-10 h-8 bg-blue-900 rounded-lg flex items-center justify-center">
-      <svg className="w-6 h-5 text-white" fill="currentColor" viewBox="0 0 26 20">
-        <g>
-          <circle cx="7" cy="7" r="3" />
-          <path d="M7 12c-3.31 0-6 1.79-6 4v1h12v-1c0-2.21-2.69-4-6-4z" />
-          <rect x="16" y="5" width="8" height="2" />
-          <rect x="16" y="9" width="8" height="2" />
-          <rect x="16" y="13" width="8" height="2" />
-        </g>
-      </svg>
-    </div>
-    <h2 className="text-xl font-bold text-gray-900">Contact Information</h2>
-  </div>
+        {/* Contact Information */}
+        {contactInfo && (
+          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-5">
+            <div className="flex items-center gap-2 mb-6">
+              <div className="w-10 h-8 bg-blue-900 rounded-lg flex items-center justify-center">
+                <svg className="w-6 h-5 text-white" fill="currentColor" viewBox="0 0 26 20">
+                  <g>
+                    <circle cx="7" cy="7" r="3" />
+                    <path d="M7 12c-3.31 0-6 1.79-6 4v1h12v-1c0-2.21-2.69-4-6-4z" />
+                    <rect x="16" y="5" width="8" height="2" />
+                    <rect x="16" y="9" width="8" height="2" />
+                    <rect x="16" y="13" width="8" height="2" />
+                  </g>
+                </svg>
+              </div>
+              <h2 className="text-xl font-bold text-gray-900">Contact Information</h2>
+            </div>
 
-  <div className="space-y-4">
-    <div className="flex items-start gap-3">
-      <Phone className="w-5 h-5 text-blue-900 mt-0.5" />
-      <div>
-        <div className="text-base font-medium text-gray-900">
-          (555) 123-4567
+            <div className="space-y-4">
+              <div className="flex items-start gap-3">
+                <Phone className="w-5 h-5 text-blue-900 mt-0.5" />
+                <div>
+                  <div className="text-base font-medium text-gray-900">{contactInfo.phone}</div>
+                  <div className="text-sm text-gray-500">Primary</div>
+                </div>
+              </div>
+
+              <div className="flex items-start gap-3">
+                <Mail className="w-5 h-5 text-blue-900 mt-0.5" />
+                <div>
+                  <div className="text-base font-medium text-gray-900">{contactInfo.email}</div>
+                  <div className="text-sm text-gray-500">Email</div>
+                </div>
+              </div>
+
+              <div className="flex items-start gap-3">
+                <svg className="w-5 h-5 text-blue-900 mt-0.5" fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z" />
+                </svg>
+                <div>
+                  <div className="text-base font-medium text-gray-900 whitespace-pre-line">{contactInfo.address}</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Quick Actions */}
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
+          <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
+            <Wrench className="w-4 h-4 text-blue-600" />
+            Quick Actions
+          </h3>
+          <div className="space-y-2">
+            <button className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-lg flex items-center justify-center gap-2">
+              <Phone className="w-4 h-4" />
+              Transfer to Service
+            </button>
+            <button className="w-full bg-yellow-500 hover:bg-yellow-600 text-gray-900 font-semibold py-2 px-4 rounded-lg flex items-center justify-center gap-2">
+              <Calendar className="w-4 h-4" />
+              Schedule Service
+            </button>
+            <button className="w-full bg-green-600 hover:bg-green-700 text-white font-semibold py-2 px-4 rounded-lg flex items-center justify-center gap-2">
+              <Phone className="w-4 h-4" />
+              View Call History
+            </button>
+          </div>
         </div>
-        <div className="text-sm text-gray-500">Primary</div>
       </div>
-    </div>
-
-    <div className="flex items-start gap-3">
-      <Mail className="w-5 h-5 text-blue-900 mt-0.5" />
-      <div>
-        <div className="text-base font-medium text-gray-900">
-          sarah.johnson@email.com
-        </div>
-        <div className="text-sm text-gray-500">Email</div>
-      </div>
-    </div>
-
-    <div className="flex items-start gap-3">
-      <svg className="w-5 h-5 text-blue-900 mt-0.5" fill="currentColor" viewBox="0 0 24 24">
-        <path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z" />
-      </svg>
-      <div>
-        <div className="text-base font-medium text-gray-900">
-          1234 Oak Street
-        </div>
-        <div className="text-sm text-gray-500">Dallas, TX 75201</div>
-      </div>
-    </div>
-  </div>
-</div>
-
-  {/* Quick Actions */}
-  <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
-    <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
-      <Wrench className="w-4 h-4 text-blue-600" />
-      Quick Actions
-    </h3>
-    <div className="space-y-2">
-      <button className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-lg flex items-center justify-center gap-2">
-        <Phone className="w-4 h-4" />
-        Transfer to Service
-      </button>
-      <button className="w-full bg-yellow-500 hover:bg-yellow-600 text-gray-900 font-semibold py-2 px-4 rounded-lg flex items-center justify-center gap-2">
-        <Calendar className="w-4 h-4" />
-        Schedule Service
-      </button>
-      <button className="w-full bg-green-600 hover:bg-green-700 text-white font-semibold py-2 px-4 rounded-lg flex items-center justify-center gap-2">
-        <Phone className="w-4 h-4" />
-        View Call History
-      </button>
-    </div>
-  </div>
-</div>
     </div>
   );
 };

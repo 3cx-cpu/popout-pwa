@@ -303,6 +303,51 @@ function App() {
             return;
           }
 
+          if (message.type === 'complete_customer_data') {
+      console.log('✅ COMPLETE CUSTOMER DATA RECEIVED:', message);
+      const callId = message.callInfo?.callId;
+      
+      if (!callId) {
+        console.warn('⚠️ No callId in complete_customer_data');
+        return;
+      }
+
+      // Update the call with complete Tekion data
+      setCurrentCalls(prevCalls => {
+        return prevCalls.map(call => {
+          if (call.callId === callId) {
+            console.log('🔄 Updating call with Tekion data:', callId);
+            return {
+              ...call,
+              customerData: {
+                ...call.customerData,
+                ...message.vinSolutions,
+                tekionData: message.tekion
+              },
+              tekionData: message.tekion, // Also store at top level for easy access
+              fullyLoaded: true,
+              loadingStage: 4
+            };
+          }
+          return call;
+        });
+      });
+
+      // Update popup if showing this call
+      setCallInfo(prevInfo => {
+        if (prevInfo && prevInfo.callId === callId) {
+          setCustomerData(prevData => ({
+            ...prevData,
+            ...message.vinSolutions,
+            tekionData: message.tekion
+          }));
+        }
+        return prevInfo;
+      });
+
+      return;
+    }
+
           // Handle call timer started
           if (message.type === 'call_timer_started') {
             console.log('⏱️ Call timer started notification received');

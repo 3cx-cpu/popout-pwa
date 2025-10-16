@@ -185,9 +185,16 @@ const Dashboard = ({ customerDataProp, fromProp, onClose, loadingStage = 4, isCa
     const currentCustomerData = {
       ...currentContactData,
       hasMultipleContacts: customerData?.hasMultipleContacts,
-      allContactsData: customerData?.allContactsData
+      allContactsData: customerData?.allContactsData,
+      tekionData: customerData?.tekionData
     };
 
+
+
+  console.log('🎯 Passing to ServiceAdvisor:', {
+    hasTekionData: !!currentCustomerData.tekionData,
+    tekionData: currentCustomerData.tekionData
+  });
     // Show progressive loading states
     const loading = !hasCompleteData;
 
@@ -218,14 +225,17 @@ const Dashboard = ({ customerDataProp, fromProp, onClose, loadingStage = 4, isCa
             loadingStage={loadingStage}
           />
         );
-      case 'serviceAdvisor':
-        return (
-          <ServiceAdvisorMainCard
-            loading={loading}
-            serviceData={currentCustomerData?.serviceAdvisorData}
-            loadingStage={loadingStage}
-          />
-        );
+   case 'serviceAdvisor':
+      return (
+        <ServiceAdvisorMainCard
+          loading={loading}
+          serviceData={{
+            tekionData: currentCustomerData?.tekionData, // Pass Tekion data
+            contact: currentContactData?.contact
+          }}
+          loadingStage={loadingStage}
+        />
+      );
       default:
         return (
           <div className="flex items-center justify-center h-96 text-gray-500">
