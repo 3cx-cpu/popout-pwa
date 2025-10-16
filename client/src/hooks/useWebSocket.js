@@ -44,17 +44,19 @@ const useWebSocket = (sid, from) => {
           const msg = JSON.parse(event.data);
           debugLog('WebSocket message received:', msg.type);
 
+
+
           if (msg.type === 'update' && msg.data) {
             debugLog('='.repeat(60));
             debugLog('CUSTOMER DATA RECEIVED');
             debugLog('='.repeat(60));
-            
+
             // Check for multiple contacts - NEW SECTION
             if (msg.data.hasMultipleContacts) {
               debugLog('🔄 MULTIPLE CONTACTS DETECTED!');
               debugLog(`Total Contacts: ${msg.data.contacts?.length || 0}`);
               debugLog(`Contact Names: ${msg.data.summary?.contactNames?.join(', ') || 'N/A'}`);
-              
+
               // Log each contact's summary
               if (msg.data.allContactsData && Array.isArray(msg.data.allContactsData)) {
                 debugLog('All Contacts Data:');
@@ -69,10 +71,10 @@ const useWebSocket = (sid, from) => {
             } else {
               debugLog('Single contact data received');
             }
-            
+
             // Log the entire data structure
             debugLog('Full data structure:', msg.data);
-            
+
             // Check data integrity - Updated for multiple contacts
             const dataIntegrity = {
               hasContact: !!msg.data.contact,
@@ -89,7 +91,7 @@ const useWebSocket = (sid, from) => {
               allContactsDataCount: msg.data.allContactsData?.length || 0
             };
             debugLog('Data integrity check:', dataIntegrity);
-            
+
             // Log primary contact's lead data (backward compatibility)
             if (msg.data.allLeadsData && Array.isArray(msg.data.allLeadsData)) {
               debugLog(`Processing ${msg.data.allLeadsData.length} leads for primary contact:`);
@@ -100,8 +102,8 @@ const useWebSocket = (sid, from) => {
                   leadStatus: lead.leadStatus,
                   hasVehiclesOfInterest: !!lead.vehiclesOfInterest,
                   vehiclesCount: lead.vehiclesOfInterest?.length || 0,
-                  firstVehicle: lead.vehiclesOfInterest?.[0] ? 
-                    `${lead.vehiclesOfInterest[0].year} ${lead.vehiclesOfInterest[0].make} ${lead.vehiclesOfInterest[0].model}` : 
+                  firstVehicle: lead.vehiclesOfInterest?.[0] ?
+                    `${lead.vehiclesOfInterest[0].year} ${lead.vehiclesOfInterest[0].make} ${lead.vehiclesOfInterest[0].model}` :
                     'None',
                   hasTradeVehicles: !!lead.tradeVehicles,
                   tradeCount: lead.tradeVehicles?.length || 0
@@ -110,7 +112,7 @@ const useWebSocket = (sid, from) => {
             } else {
               debugLog('WARNING: allLeadsData is missing or not an array!');
             }
-            
+
             // Log sales data
             console.log('=== SALES DATA DEBUG ===');
             console.log('salesAssignment:', msg.data.salesAssignment);
@@ -123,19 +125,39 @@ const useWebSocket = (sid, from) => {
               });
             }
             console.log('========================');
-            
+
             debugLog('='.repeat(60));
-            
+
             setCustomerData(msg.data);
             setLoading(false);
             setSelectedLeadIndex(0);
             setSelectedContactIndex(0); // Reset to first contact when new data arrives
-            
+
           } else if (msg.type === 'status') {
             debugLog('Status message:', msg);
             setLoading(false);
           } else if (msg.type === 'ack') {
             debugLog('Acknowledgment received');
+          }
+
+          if (msg.type === 'tekion_update') {
+            console.log('🚀 TEKION UPDATE RECEIVED:', {
+              stage: msg.stage,
+              data: msg.data,
+              callInfo: msg.callInfo
+            });
+          }
+
+          if (msg.type === 'tekion_data') {
+            console.log('📦 TEKION COMPLETE DATA:', msg.data);
+          }
+
+          if (msg.type === 'complete_customer_data') {
+            console.log('✅ COMBINED DATA RECEIVED:', {
+              hasVinSolutions: !!msg.vinSolutions,
+              hasTekion: !!msg.tekion,
+              tekionData: msg.tekion
+            });
           }
         } catch (error) {
           console.error('Error parsing WebSocket message:', error);
@@ -167,11 +189,11 @@ const useWebSocket = (sid, from) => {
   // NEW: Helper function to get current contact data
   const getCurrentContactData = () => {
     if (!customerData) return null;
-    
+
     if (customerData.hasMultipleContacts && customerData.allContactsData) {
       return customerData.allContactsData[selectedContactIndex] || null;
     }
-    
+
     // Fallback to single contact structure
     return {
       contact: customerData.contact,
@@ -182,20 +204,20 @@ const useWebSocket = (sid, from) => {
       salesAssignment: customerData.salesAssignment,
       salesRepInfo: customerData.salesRepInfo,
       leadSource: customerData.leadSource,
-      
+
     };
   };
 
-  return { 
-    connectionStatus, 
-    customerData, 
-    loading, 
-    selectedLeadIndex, 
+  return {
+    connectionStatus,
+    customerData,
+    loading,
+    selectedLeadIndex,
     setSelectedLeadIndex,
     selectedContactIndex, // NEW
     setSelectedContactIndex, // NEW
     getCurrentContactData, // NEW: Helper function
-    debugLog 
+    debugLog
   };
 };
 

@@ -1,5 +1,3 @@
-// client\src\pages\Dashboard.jsx
-
 import React, { useState, useEffect } from 'react';
 import { Clock, X } from 'lucide-react';
 import RoleTabs from '../components/common/RoleTabs';
@@ -21,6 +19,28 @@ const Dashboard = ({ customerDataProp, fromProp, onClose, loadingStage = 4, isCa
   useEffect(() => {
     console.log('📊 Dashboard received new customerData:', customerDataProp);
     setCustomerData(customerDataProp);
+
+    if (customerDataProp?.tekionData) {
+      console.log('🎯 TEKION DATA IN DASHBOARD:', customerDataProp.tekionData);
+
+      // Log repair orders if present
+      if (customerDataProp.tekionData.repairOrders) {
+        console.log('🔧 REPAIR ORDERS:', customerDataProp.tekionData.repairOrders);
+
+        // Log the first repair order details
+        const firstRO = customerDataProp.tekionData.repairOrders[0];
+        if (firstRO) {
+          console.log('📋 First RO Details:', {
+            roNumber: firstRO.roNumber,
+            status: firstRO.status,
+            totalAmount: firstRO.financial?.totalAmount,
+            vehicle: firstRO.vehicle,
+            jobs: firstRO.jobs
+          });
+        }
+      }
+    }
+
   }, [customerDataProp]);
 
   // Handle call duration timer based on callStartTime
@@ -60,13 +80,13 @@ const Dashboard = ({ customerDataProp, fromProp, onClose, loadingStage = 4, isCa
       console.log('⚠️ Dashboard: No customer data available');
       return null;
     }
-    
+
     console.log('📊 Dashboard getCurrentContactData:', {
       hasMultipleContacts: customerData?.hasMultipleContacts,
       allContactsDataLength: customerData?.allContactsData?.length,
       selectedContactIndex: selectedContactIndex
     });
-    
+
     if (customerData?.hasMultipleContacts && customerData?.allContactsData) {
       return customerData.allContactsData[selectedContactIndex] || {};
     }
@@ -83,7 +103,7 @@ const Dashboard = ({ customerDataProp, fromProp, onClose, loadingStage = 4, isCa
   };
 
   const currentContactData = getCurrentContactData();
-  
+
   console.log('📊 Dashboard currentContactData:', currentContactData);
 
   const getVehicleData = () => {
@@ -143,13 +163,12 @@ const Dashboard = ({ customerDataProp, fromProp, onClose, loadingStage = 4, isCa
         <div className="space-y-2">
           {stages.map((stage) => (
             <div key={stage.number} className="flex items-center gap-2">
-              <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${
-                stage.complete 
-                  ? 'bg-green-500 text-white' 
-                  : stage.number === loadingStage 
-                    ? 'bg-blue-500 text-white animate-pulse' 
+              <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${stage.complete
+                  ? 'bg-green-500 text-white'
+                  : stage.number === loadingStage
+                    ? 'bg-blue-500 text-white animate-pulse'
                     : 'bg-gray-300 text-gray-600'
-              }`}>
+                }`}>
                 {stage.complete ? '✓' : stage.number}
               </div>
               <span className={`text-sm ${stage.complete ? 'text-green-600 font-semibold' : 'text-gray-600'}`}>
@@ -201,7 +220,7 @@ const Dashboard = ({ customerDataProp, fromProp, onClose, loadingStage = 4, isCa
         );
       case 'serviceAdvisor':
         return (
-          <ServiceAdvisorMainCard 
+          <ServiceAdvisorMainCard
             loading={loading}
             serviceData={currentCustomerData?.serviceAdvisorData}
             loadingStage={loadingStage}
@@ -264,18 +283,18 @@ const Dashboard = ({ customerDataProp, fromProp, onClose, loadingStage = 4, isCa
   return (
     <div className="min-h-screen bg-gray-50">
       <LoadingStageIndicator />
-      
-      <CustomerInfoCard 
-        customerData={customerData} 
-        from={from} 
+
+      <CustomerInfoCard
+        customerData={customerData}
+        from={from}
         loading={!hasBasicContact}
         selectedContactIndex={selectedContactIndex}
         onContactChange={handleContactChange}
         loadingStage={loadingStage}
       />
-      
+
       <RoleTabs activeRole={activeRole} onRoleChange={setActiveRole} />
-      
+
       <div className="bg-white border-b px-4 py-2 flex items-center justify-between text-sm">
         <div className="flex items-center gap-2">
           <div className={`w-2 h-2 ${getCallStatusBg()} rounded-full ${isCallActive && callStartTime ? 'animate-pulse' : ''}`}></div>
@@ -289,7 +308,7 @@ const Dashboard = ({ customerDataProp, fromProp, onClose, loadingStage = 4, isCa
           )}
         </div>
         {onClose && (
-          <button 
+          <button
             onClick={onClose}
             className="flex items-center gap-2 bg-red-600 hover:bg-red-700 text-white font-semibold px-4 py-2 rounded transition-colors"
           >

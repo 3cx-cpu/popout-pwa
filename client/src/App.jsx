@@ -1,5 +1,3 @@
-// client\src\App.jsx
-
 import { useState, useEffect, useRef, useCallback } from 'react';
 import './App.css';
 import Dashboard from './pages/Dashboard';

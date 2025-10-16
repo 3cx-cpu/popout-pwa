@@ -1,4 +1,5 @@
-// database.js
+// backend\database.js
+
 const { MongoClient } = require('mongodb');
 
 const MONGODB_URI = 'mongodb://korulla:comstream%402025@172.235.9.115:27017/admin';
@@ -21,20 +22,20 @@ async function connectDB() {
     await client.connect();
     db = client.db(DB_NAME);
     console.log('✅ Connected to MongoDB successfully');
-    
+
     // Create indexes for better query performance
     const collection = db.collection(COLLECTION_NAME);
-    
+
     // Index for user queries
     await collection.createIndex({ userExtension: 1, savedAt: -1 });
-    
+
     // Index for call ID lookups
     await collection.createIndex({ callId: 1 });
-    
+
     // Note: _id is already unique by default, no need to create index
-    
+
     console.log('✅ MongoDB indexes created');
-    
+
     return db;
   } catch (error) {
     console.error('❌ MongoDB connection error:', error.message);
@@ -51,7 +52,7 @@ async function saveCallData(callData) {
       ...callData,
       savedAt: new Date()
     };
-    
+
     // Only add _id if not already provided
     if (!callDocument._id) {
       callDocument._id = `${callData.userExtension}-${callData.callId}-${Date.now()}`;
